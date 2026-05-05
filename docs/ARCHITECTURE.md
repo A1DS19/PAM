@@ -145,6 +145,30 @@ Three rules, repeat in code review:
 3. Default to small aggregates. Merge only when an invariant requires atomic
    writes across them.
 
+## Secrets
+
+Two-layer model:
+
+1. **Non-secret config** (URLs, log levels, feature flags, the Infisical
+   project ID itself) lives in `appsettings.{env}.json`, committed.
+2. **Secrets** (DB connection strings, Keycloak admin credentials, RabbitMQ
+   passwords, JWT signing keys, payment-provider HMACs) live in **Infisical**,
+   self-hosted in `docker-compose.yml` and run on the on-prem hardware in
+   non-dev environments.
+
+The `Pam.Api` host carries an `InfisicalSecretsConfigurationProvider` that
+runs at startup, authenticates via Universal Auth (Machine Identity), pulls
+secrets from a project + environment, maps `__` → `:` to match ASP.NET
+configuration keys, and inserts them as the highest-priority configuration
+source. When `INFISICAL_CLIENT_ID` / `INFISICAL_CLIENT_SECRET` env vars are
+absent, the provider is a no-op and `appsettings.json` wins (the local-dev
+default).
+
+The Machine Identity credentials themselves are the bootstrap secret. In
+prod they're injected as env vars by whatever orchestrator runs the API
+(systemd unit, k3s Secret, Swarm secret); they are **not** committed and
+**not** stored back in Infisical (chicken-and-egg).
+
 ## Outbox is not wired yet
 
 Domain events dispatch pre-save (atomic with the DB write through the

@@ -58,11 +58,14 @@ What's deferred and the trigger that should bring each forward.
   needed when async outbox flows span multiple traces.
 
 ### Production secret store
-- **What**: Vault or Infisical for runtime secrets (DB connection, Keycloak
-  admin client secret, Rabbit credentials, Game-provider HMAC keys when
-  GameWallet exists).
-- **Trigger**: first non-dev environment. Local dev keeps secrets in
-  `appsettings.json` and that's fine.
+- **Status**: Infisical wired. Self-hosted in `docker-compose.yml`. The
+  `InfisicalSecretsConfigurationProvider` in `Pam.Api` is opt-in via env
+  vars and falls back to `appsettings.json` when not configured.
+- **Open**: bootstrap is currently manual UI-driven (admin account,
+  organization, project, machine identity). Automate with the Infisical
+  CLI in deploy pipelines once we have one.
+- **Open**: rotate the dev `ENCRYPTION_KEY` and `AUTH_SECRET` for staging
+  and prod (currently hardcoded dev values in compose).
 
 ### Tests
 - **What**: unit tests for domain (`Player.Register`, value-object

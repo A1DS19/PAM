@@ -100,9 +100,59 @@ services:
     volumes:
       - pam-seq:/data
 
+  infisical-postgres:
+    image: postgres:17
+    container_name: pam-infisical-postgres
+    environment:
+      POSTGRES_USER: infisical
+      POSTGRES_PASSWORD: infisical_dev_password
+      POSTGRES_DB: infisical
+    ports:
+      - "5434:5432"
+    volumes:
+      - pam-infisical-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U infisical -d infisical"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  infisical-redis:
+    image: redis:7-alpine
+    container_name: pam-infisical-redis
+    ports:
+      - "6381:6379"
+    volumes:
+      - pam-infisical-redis:/data
+
+  infisical:
+    image: infisical/infisical:latest-postgres
+    container_name: pam-infisical
+    environment:
+      # DEV-ONLY KEYS — regenerate for any non-local environment.
+      # ENCRYPTION_KEY: openssl rand -hex 16
+      # AUTH_SECRET:    openssl rand -base64 32
+      ENCRYPTION_KEY: f40c9178b54dd14b7f06b84dde9a1d2d
+      AUTH_SECRET: 5lrMXKKWCVocS/uerPsl7V+TX/aaUaI7iDkgl3tSmLE=
+      DB_CONNECTION_URI: postgres://infisical:infisical_dev_password@infisical-postgres:5432/infisical
+      REDIS_URL: redis://infisical-redis:6379
+      SITE_URL: http://localhost:8085
+      JWT_AUTH_LIFETIME: 86400
+      JWT_REFRESH_LIFETIME: 7776000
+      TELEMETRY_ENABLED: "false"
+    ports:
+      - "8085:8080"
+    depends_on:
+      infisical-postgres:
+        condition: service_healthy
+      infisical-redis:
+        condition: service_started
+
 volumes:
   pam-postgres:
   pam-keycloak-postgres:
   pam-redis:
   pam-rabbitmq:
   pam-seq:
+  pam-infisical-postgres:
+  pam-infisical-redis:
