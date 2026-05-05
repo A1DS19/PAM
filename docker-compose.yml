@@ -1,0 +1,108 @@
+name: pam
+
+services:
+  postgres:
+    image: postgres:17
+    container_name: pam-postgres
+    environment:
+      POSTGRES_USER: pam
+      POSTGRES_PASSWORD: pam_dev_password
+      POSTGRES_DB: pam
+    ports:
+      - "5432:5432"
+    volumes:
+      - pam-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pam -d pam"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  keycloak-postgres:
+    image: postgres:17
+    container_name: pam-keycloak-postgres
+    environment:
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: keycloak_dev_password
+      POSTGRES_DB: keycloak
+    ports:
+      - "5433:5432"
+    volumes:
+      - pam-keycloak-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: pam-keycloak
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-postgres:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: keycloak_dev_password
+      KC_HEALTH_ENABLED: "true"
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./infra/keycloak/realms:/opt/keycloak/data/import:ro
+    depends_on:
+      keycloak-postgres:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    container_name: pam-redis
+    command: ["redis-server", "--requirepass", "redis_dev_password"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - pam-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "redis_dev_password", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    container_name: pam-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: pam
+      RABBITMQ_DEFAULT_PASS: rabbit_dev_password
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - pam-rabbitmq:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  seq:
+    image: datalust/seq:latest
+    container_name: pam-seq
+    environment:
+      ACCEPT_EULA: "Y"
+    ports:
+      - "5341:5341"
+      - "8090:80"
+    volumes:
+      - pam-seq:/data
+
+volumes:
+  pam-postgres:
+  pam-keycloak-postgres:
+  pam-redis:
+  pam-rabbitmq:
+  pam-seq:

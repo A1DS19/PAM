@@ -1,0 +1,6 @@
+P:System.DateTime.Now;Use IClock.UtcNow for testability and timezone correctness
+P:System.DateTime.UtcNow;Use IClock.UtcNow for testability
+P:System.DateTimeOffset.Now;Use IClock.UtcNow for testability
+T:System.Random;Use System.Security.Cryptography.RandomNumberGenerator (System.Random is not cryptographically safe)
+M:System.Console.WriteLine(System.String);Use ILogger
+M:System.Console.Write(System.String);Use ILogger
