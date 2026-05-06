@@ -39,7 +39,12 @@ public static class PlayersModule
             .Bind(configuration.GetSection(KeycloakOptions.SectionName))
             .ValidateOnStart();
 
-        services.AddTransient<AdminTokenHandler>();
+        // Singleton — the handler caches the admin access token in memory
+        // and refreshes it under a SemaphoreSlim. Registered as transient
+        // it lost the cache on every request and hammered the token
+        // endpoint; the singleton lifetime is what makes the lock and the
+        // expiry check meaningful.
+        services.AddSingleton<AdminTokenHandler>();
         services.AddHttpClient("keycloak-token");
 
         services
