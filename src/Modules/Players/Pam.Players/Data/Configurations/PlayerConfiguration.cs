@@ -64,7 +64,12 @@ public sealed class PlayerConfiguration : IEntityTypeConfiguration<Player>
             }
         );
 
-        builder.Property(p => p.Status).HasColumnName("status").HasConversion<int>().IsRequired();
+        builder
+            .Property(p => p.Status)
+            .HasColumnName("status")
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .IsRequired();
 
         builder.Property(p => p.EmailVerified).HasColumnName("email_verified").IsRequired();
 
