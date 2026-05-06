@@ -7,7 +7,6 @@ using Microsoft.AspNetCore.RateLimiting;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
-using Pam.Api.Infrastructure.Infisical;
 using Pam.Api.Security;
 using Pam.Players;
 using Pam.Shared.Exceptions.Handlers;
@@ -19,19 +18,10 @@ using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Infisical: opt-in secret store. No-op when env vars aren't set, so local
-// dev keeps using appsettings.{env}.json. Inserted last so it overrides
-// every other configuration source.
-builder.Configuration.AddInfisical(o =>
-{
-    o.Host = builder.Configuration["Infisical:Host"];
-    o.ProjectId = builder.Configuration["Infisical:ProjectId"];
-    o.Environment = builder.Configuration["Infisical:Environment"] ?? "dev";
-    o.SecretPath = builder.Configuration["Infisical:SecretPath"] ?? "/";
-    o.ClientId = System.Environment.GetEnvironmentVariable("INFISICAL_CLIENT_ID");
-    o.ClientSecret = System.Environment.GetEnvironmentVariable("INFISICAL_CLIENT_SECRET");
-    o.Optional = true;
-});
+// Configuration precedence (highest first): environment variables,
+// appsettings.{env}.json, appsettings.json. ASP.NET wires this by default —
+// no extra code needed. Production secrets arrive as env vars from the
+// orchestrator (systemd unit, k3s Secret, Swarm secret).
 
 builder.Host.UseSerilog(
     (ctx, _, cfg) =>
