@@ -117,6 +117,9 @@ services:
     container_name: pam-seq
     environment:
       ACCEPT_EULA: "Y"
+      # Dev only: skip the admin-password setup wizard. In any non-dev
+      # deployment, set SEQ_FIRSTRUN_ADMINPASSWORD instead.
+      SEQ_FIRSTRUN_NOAUTHENTICATION: "true"
     ports:
       - "5341:5341"
       - "8090:80"

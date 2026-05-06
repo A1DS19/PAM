@@ -34,8 +34,14 @@ make test                            # 22 unit tests, ~40ms (separate terminal)
 ```
 
 API at `http://localhost:5000`. Scalar UI at `/scalar/v1`. OpenAPI spec at
-`/openapi/v1.json`. ZITADEL console at `http://localhost:8080` (initial
-admin: `zitadel-admin@zitadel.localhost` / `Password1!`).
+`/openapi/v1.json`. ZITADEL admin console at
+`http://localhost:8080/ui/console/` (initial admin:
+`zitadel-admin@zitadel.localhost` / `Password1!`). Seq at
+`http://localhost:8090` (no auth in dev).
+
+> The path `/ui/v2/login/` is the ZITADEL Login UI v2 — it only serves
+> content when reached as part of an OIDC redirect, not from a direct
+> `GET /`. Use `/ui/console/` for the admin UI.
 
 ## Smoke test
 
