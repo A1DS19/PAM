@@ -14,20 +14,25 @@ public static class PlayersModule
 {
     public static IServiceCollection AddPlayersModule(
         this IServiceCollection services,
-        IConfiguration configuration)
+        IConfiguration configuration
+    )
     {
         services.AddScoped<AuditableSaveChangesInterceptor>();
         services.AddScoped<DispatchDomainEventsInterceptor>();
 
-        services.AddDbContext<PlayersDbContext>((sp, opts) =>
-        {
-            opts.UseNpgsql(
-                configuration.GetConnectionString("Pam"),
-                npg => npg.MigrationsHistoryTable("__EFMigrationsHistory", "player"));
-            opts.AddInterceptors(
-                sp.GetRequiredService<AuditableSaveChangesInterceptor>(),
-                sp.GetRequiredService<DispatchDomainEventsInterceptor>());
-        });
+        services.AddDbContext<PlayersDbContext>(
+            (sp, opts) =>
+            {
+                opts.UseNpgsql(
+                    configuration.GetConnectionString("Pam"),
+                    npg => npg.MigrationsHistoryTable("__EFMigrationsHistory", "player")
+                );
+                opts.AddInterceptors(
+                    sp.GetRequiredService<AuditableSaveChangesInterceptor>(),
+                    sp.GetRequiredService<DispatchDomainEventsInterceptor>()
+                );
+            }
+        );
 
         services
             .AddOptions<KeycloakOptions>()
@@ -38,19 +43,25 @@ public static class PlayersModule
         services.AddHttpClient("keycloak-token");
 
         services
-            .AddHttpClient<IIdentityProvider, KeycloakIdentityProvider>((sp, http) =>
-            {
-                var opts = sp.GetRequiredService<IOptions<KeycloakOptions>>().Value;
-                http.BaseAddress = new Uri(opts.AuthServerUrl.TrimEnd('/') + "/");
-            })
+            .AddHttpClient<IIdentityProvider, KeycloakIdentityProvider>(
+                (sp, http) =>
+                {
+                    var opts = sp.GetRequiredService<IOptions<KeycloakOptions>>().Value;
+                    http.BaseAddress = new Uri(opts.AuthServerUrl.TrimEnd('/') + "/");
+                }
+            )
             .AddHttpMessageHandler<AdminTokenHandler>();
 
-        services.AddHealthChecks()
+        services
+            .AddHealthChecks()
             .AddNpgSql(
                 connectionString: configuration.GetConnectionString("Pam")
-                    ?? throw new InvalidOperationException("ConnectionStrings:Pam is not configured"),
+                    ?? throw new InvalidOperationException(
+                        "ConnectionStrings:Pam is not configured"
+                    ),
                 name: "player.postgres",
-                tags: ["ready", "module:player"]);
+                tags: ["ready", "module:player"]
+            );
 
         return services;
     }

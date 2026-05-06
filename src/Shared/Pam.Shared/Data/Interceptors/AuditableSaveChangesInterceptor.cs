@@ -13,7 +13,8 @@ public sealed class AuditableSaveChangesInterceptor(IClock clock, IUserContext u
     public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
         DbContextEventData eventData,
         InterceptionResult<int> result,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default
+    )
     {
         if (eventData.Context is not null)
         {
@@ -24,7 +25,8 @@ public sealed class AuditableSaveChangesInterceptor(IClock clock, IUserContext u
 
     public override InterceptionResult<int> SavingChanges(
         DbContextEventData eventData,
-        InterceptionResult<int> result)
+        InterceptionResult<int> result
+    )
     {
         if (eventData.Context is not null)
         {
@@ -36,7 +38,7 @@ public sealed class AuditableSaveChangesInterceptor(IClock clock, IUserContext u
     private void UpdateAuditableEntities(DbContext context)
     {
         var now = clock.UtcNow;
-        var actor = userContext.UserId;
+        var actor = userContext.Current;
 
         foreach (EntityEntry entry in context.ChangeTracker.Entries())
         {
@@ -48,13 +50,15 @@ public sealed class AuditableSaveChangesInterceptor(IClock clock, IUserContext u
             if (entry.State == EntityState.Added)
             {
                 entry.Property(nameof(IEntity.CreatedAt)).CurrentValue = now;
-                entry.Property(nameof(IEntity.CreatedBy)).CurrentValue = actor;
+                entry.Property(nameof(IEntity.CreatedByType)).CurrentValue = actor.Type;
+                entry.Property(nameof(IEntity.CreatedById)).CurrentValue = actor.Id;
             }
 
             if (entry.State is EntityState.Added or EntityState.Modified)
             {
                 entry.Property(nameof(IEntity.LastModifiedAt)).CurrentValue = now;
-                entry.Property(nameof(IEntity.LastModifiedBy)).CurrentValue = actor;
+                entry.Property(nameof(IEntity.LastModifiedByType)).CurrentValue = actor.Type;
+                entry.Property(nameof(IEntity.LastModifiedById)).CurrentValue = actor.Id;
             }
         }
     }

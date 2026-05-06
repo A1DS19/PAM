@@ -69,9 +69,27 @@ public sealed class PlayerConfiguration : IEntityTypeConfiguration<Player>
         builder.Property(p => p.EmailVerified).HasColumnName("email_verified").IsRequired();
 
         builder.Property(p => p.CreatedAt).HasColumnName("created_at").IsRequired();
-        builder.Property(p => p.CreatedBy).HasColumnName("created_by").HasMaxLength(64);
+        builder
+            .Property(p => p.CreatedByType)
+            .HasColumnName("created_by_type")
+            .HasConversion<string>()
+            .HasMaxLength(16)
+            .IsRequired();
+        builder
+            .Property(p => p.CreatedById)
+            .HasColumnName("created_by_id")
+            .HasMaxLength(64)
+            .IsRequired();
         builder.Property(p => p.LastModifiedAt).HasColumnName("last_modified_at");
-        builder.Property(p => p.LastModifiedBy).HasColumnName("last_modified_by").HasMaxLength(64);
+        builder
+            .Property(p => p.LastModifiedByType)
+            .HasColumnName("last_modified_by_type")
+            .HasConversion<string>()
+            .HasMaxLength(16);
+        builder
+            .Property(p => p.LastModifiedById)
+            .HasColumnName("last_modified_by_id")
+            .HasMaxLength(64);
 
         builder.Ignore(p => p.DomainEvents);
     }
