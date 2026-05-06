@@ -1,6 +1,8 @@
 using System.Threading.RateLimiting;
 using Carter;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -76,29 +78,71 @@ builder
 builder.Services.AddAuthorization(opt =>
 {
     opt.AddPolicy("Player", p => p.AddAuthenticationSchemes("players").RequireAuthenticatedUser());
+
+    // Fallback denies anonymous on any endpoint that does not opt in to
+    // .AllowAnonymous(). Forces public endpoints to be explicit.
+    opt.FallbackPolicy = new AuthorizationPolicyBuilder("players")
+        .RequireAuthenticatedUser()
+        .Build();
+});
+
+// Trust proxy headers so RemoteIpAddress / scheme reflect the real client
+// when behind a load balancer or ingress. KnownProxies/Networks must be set
+// in production via configuration; cleared here so dev runs see the actual
+// loopback IP.
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    options.KnownNetworks.Clear();
+    options.KnownProxies.Clear();
 });
 
 builder.Services.AddRateLimiter(o =>
 {
     o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 
-    o.AddFixedWindowLimiter(
-        "auth-sensitive",
-        opt =>
+    static string ClientPartitionKey(HttpContext ctx)
+    {
+        // Prefer authenticated identity; fall back to forwarded client IP.
+        // UseForwardedHeaders runs before this, so RemoteIpAddress reflects
+        // X-Forwarded-For when configured.
+        var playerId = ctx.User.FindFirst("player_id")?.Value;
+        if (!string.IsNullOrEmpty(playerId))
         {
-            opt.Window = TimeSpan.FromMinutes(1);
-            opt.PermitLimit = 5;
-            opt.QueueLimit = 0;
+            return $"player:{playerId}";
         }
+
+        var ip = ctx.Connection.RemoteIpAddress;
+        if (ip is null)
+        {
+            return "anon";
+        }
+        if (ip.IsIPv4MappedToIPv6)
+        {
+            ip = ip.MapToIPv4();
+        }
+        return $"ip:{ip}";
+    }
+
+    o.AddPolicy(
+        "auth-sensitive",
+        ctx =>
+            RateLimitPartition.GetFixedWindowLimiter(
+                ClientPartitionKey(ctx),
+                _ => new FixedWindowRateLimiterOptions
+                {
+                    Window = TimeSpan.FromMinutes(1),
+                    PermitLimit = 5,
+                    QueueLimit = 0,
+                }
+            )
     );
 
     o.AddPolicy(
         "api-default",
         ctx =>
             RateLimitPartition.GetSlidingWindowLimiter(
-                ctx.User.FindFirst("player_id")?.Value
-                    ?? ctx.Connection.RemoteIpAddress?.ToString()
-                    ?? "anon",
+                ClientPartitionKey(ctx),
                 _ => new SlidingWindowRateLimiterOptions
                 {
                     Window = TimeSpan.FromSeconds(30),
@@ -108,6 +152,31 @@ builder.Services.AddRateLimiter(o =>
                 }
             )
     );
+
+    o.OnRejected = async (context, cancellationToken) =>
+    {
+        context.HttpContext.RequestServices
+            .GetRequiredService<ILoggerFactory>()
+            .CreateLogger("RateLimiter")
+            .LogWarning(
+                "Rate limit exceeded: Path={Path} Method={Method} RemoteIp={RemoteIp}",
+                context.HttpContext.Request.Path,
+                context.HttpContext.Request.Method,
+                context.HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown"
+            );
+
+        if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
+        {
+            context.HttpContext.Response.Headers.RetryAfter =
+                ((int)retryAfter.TotalSeconds).ToString(System.Globalization.CultureInfo.InvariantCulture);
+        }
+
+        context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;
+        await context.HttpContext.Response.WriteAsJsonAsync(
+            new { title = "Too Many Requests", status = 429 },
+            cancellationToken: cancellationToken
+        );
+    };
 });
 
 builder
@@ -131,6 +200,7 @@ builder.Services.AddHealthChecks();
 
 var app = builder.Build();
 
+app.UseForwardedHeaders();
 app.UseSerilogRequestLogging();
 app.UseExceptionHandler();
 app.UseRateLimiter();
@@ -140,22 +210,26 @@ app.MapCarter();
 
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
-    app.MapScalarApiReference(opt => opt.WithTitle("PAM API").WithTheme(ScalarTheme.Purple));
+    app.MapOpenApi().AllowAnonymous();
+    app.MapScalarApiReference(opt => opt.WithTitle("PAM API").WithTheme(ScalarTheme.Purple))
+        .AllowAnonymous();
 }
 
-app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false });
+app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false })
+    .AllowAnonymous();
 app.MapHealthChecks(
-    "/health/ready",
-    new HealthCheckOptions { Predicate = h => h.Tags.Contains("ready", StringComparer.Ordinal) }
-);
+        "/health/ready",
+        new HealthCheckOptions { Predicate = h => h.Tags.Contains("ready", StringComparer.Ordinal) }
+    )
+    .AllowAnonymous();
 app.MapHealthChecks(
-    "/health/players",
-    new HealthCheckOptions
-    {
-        Predicate = h => h.Tags.Contains("module:player", StringComparer.Ordinal),
-    }
-);
+        "/health/players",
+        new HealthCheckOptions
+        {
+            Predicate = h => h.Tags.Contains("module:player", StringComparer.Ordinal),
+        }
+    )
+    .AllowAnonymous();
 
 app.UsePlayersModule();
 
