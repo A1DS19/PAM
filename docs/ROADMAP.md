@@ -17,8 +17,10 @@ What's deferred and the trigger that should bring each forward.
   events. Records actor, IP, correlation-id, raw event payload.
 - **Trigger**: regulator asks, or first jurisdiction we operate in requires
   it (most do).
-- **Note**: this is **regulatory** audit. Application audit (createdBy,
-  modifiedBy) is already on every entity.
+- **Note**: this is **regulatory** audit. Application audit (the
+  `(CreatedByType, CreatedById, LastModifiedByType, LastModifiedById)`
+  columns on every `Entity<TId>`) already covers app-level "who did
+  what."
 
 ### Operators realm + admin endpoints
 - **What**: second Keycloak realm `operators`, second `JwtBearer` scheme in
