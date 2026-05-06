@@ -9,6 +9,41 @@ Rough ADR shape, kept terse. Order is reverse-chronological.
 
 ---
 
+## 15. ZITADEL bootstrap as `IHostedService`, not a shell script — 2026-05-06
+
+**Context.** Decision #12 introduced ZITADEL with a bash + curl + python3
+bootstrap script that read the admin PAT from a Docker volume, then made
+three API calls to ensure Orgs and Project. The script kept hitting
+portability issues: volume-path lookup differs per Docker setup, ZITADEL
+changed the org-search endpoint between versions, the chicken-and-egg
+PAT extraction needed permission fix-ups, and idempotency-check fallbacks
+were noisy on fresh runs.
+
+**Decision.** Remove `infra/zitadel/bootstrap.sh` and `.env.zitadel`.
+Bootstrap moves into `Pam.Api` as `ZitadelBootstrapService : IHostedService`,
+which:
+- waits for ZITADEL's OIDC discovery endpoint to come online (2-min cap),
+- reads the PAT from a configurable file path (default
+  `infra/zitadel/machinekey/zitadel-admin-sa.pat`, walks up to repo root
+  if invoked from a sub-dir),
+- ensures the configured Brand Orgs exist (POST /management/v1/orgs;
+  on 409, search via /v2/organizations/_search),
+- ensures the Project exists in the default brand's Org,
+- writes the resulting Org IDs and PAT into `ZitadelRuntimeState`
+  (singleton) which `BrandRegistry` and `ZitadelTokenHandler` read from.
+
+**Consequences.**
+- One language. No python3 / curl / bash shell-quoting fragility.
+- API fails fast at startup if ZITADEL isn't reachable — the same
+  property we want for any IDP-dependent service.
+- mprocs goes from three procs (services / bootstrap / api) to two
+  (services / api), matching the peer pro-cr-billing pattern.
+- `BrandRegistryOptions.Map` collapses to `BrandRegistryOptions.BrandIds`
+  (a list) — Org IDs are runtime-resolved, not config-supplied.
+- `ZitadelOptions.AdminPat` becomes `ZitadelOptions.AdminPatFile`.
+
+---
+
 ## 14. Per-brand Player records; defer cross-brand `Subject` — 2026-05-06
 
 **Context.** With multi-brand confirmed, the question is whether a single

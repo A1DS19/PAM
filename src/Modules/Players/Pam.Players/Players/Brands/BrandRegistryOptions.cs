@@ -6,11 +6,6 @@ public sealed class BrandRegistryOptions
 
     public string Default { get; init; } = "betanything-eu";
 
-    public IDictionary<string, BrandEntry> Map { get; init; } =
-        new Dictionary<string, BrandEntry>(StringComparer.Ordinal);
-}
-
-public sealed class BrandEntry
-{
-    public string ZitadelOrgId { get; init; } = default!;
+    public IList<string> BrandIds { get; init; } =
+        new List<string> { "betanything-eu", "betanything-latam-stub" };
 }

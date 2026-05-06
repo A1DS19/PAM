@@ -44,6 +44,8 @@ appsettings.*.Local.json
 .env
 .env.*
 !.env.example
+infra/zitadel/machinekey/
 
 # Misc
 *.iml
+mprocs.log

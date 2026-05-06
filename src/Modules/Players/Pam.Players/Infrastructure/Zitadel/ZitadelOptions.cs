@@ -10,5 +10,11 @@ public sealed class ZitadelOptions
 
     public string ManagementApiBaseUrl { get; init; } = default!;
 
-    public string AdminPat { get; init; } = default!;
+    // Path to the PAT file ZITADEL writes on first init via
+    // ZITADEL_FIRSTINSTANCE_PATPATH. Resolved relative to the working
+    // directory or — if not found — by walking upward to find the repo
+    // root (pam.slnx or .git marker).
+    public string AdminPatFile { get; init; } = default!;
+
+    public string ProjectName { get; init; } = "pam-player-api";
 }

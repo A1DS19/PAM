@@ -46,7 +46,11 @@ public static class PlayersModule
             .Bind(configuration.GetSection(ZitadelOptions.SectionName))
             .ValidateOnStart();
 
+        services.AddSingleton<ZitadelRuntimeState>();
         services.AddTransient<ZitadelTokenHandler>();
+
+        services.AddHttpClient("zitadel-bootstrap");
+        services.AddHttpClient("zitadel-readiness");
 
         services
             .AddHttpClient<IIdentityProvider, ZitadelIdentityProvider>(
@@ -57,6 +61,8 @@ public static class PlayersModule
                 }
             )
             .AddHttpMessageHandler<ZitadelTokenHandler>();
+
+        services.AddHostedService<ZitadelBootstrapService>();
 
         services
             .AddHealthChecks()

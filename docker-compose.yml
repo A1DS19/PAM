@@ -60,13 +60,17 @@ services:
       ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORDCHANGEREQUIRED: "false"
       ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_USERNAME: zitadel-admin-sa
       ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_NAME: Bootstrap SA
-      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_SCOPES: "openid urn:zitadel:iam:org:project:id:zitadel:aud"
       ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_EXPIRATIONDATE: "2030-01-01T00:00:00Z"
       ZITADEL_FIRSTINSTANCE_PATPATH: /machinekey/zitadel-admin-sa.pat
     ports:
       - "8080:8080"
     volumes:
-      - pam-zitadel-machinekey:/machinekey
+      # Bind mount (not a named volume) so the host has direct read access to
+      # the PAT file written on first init. The host dir is pre-created with
+      # world-writable perms by `make up` because Docker named volumes default
+      # to root-owned and the ZITADEL container process runs as a non-root
+      # user.
+      - ./infra/zitadel/machinekey:/machinekey
     depends_on:
       zitadel-postgres:
         condition: service_healthy
@@ -122,7 +126,6 @@ services:
 volumes:
   pam-postgres:
   pam-zitadel-postgres:
-  pam-zitadel-machinekey:
   pam-redis:
   pam-rabbitmq:
   pam-seq:

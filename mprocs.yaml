@@ -1,7 +1,5 @@
 procs:
   services:
     shell: docker compose up
-  bootstrap:
-    shell: sleep 30 && make zitadel-bootstrap
   api:
-    shell: sleep 60 && make dev-api
+    shell: sleep 30 && make dev-api
