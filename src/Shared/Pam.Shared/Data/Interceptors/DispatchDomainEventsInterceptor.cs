@@ -8,32 +8,25 @@ namespace Pam.Shared.Data.Interceptors;
 
 public sealed class DispatchDomainEventsInterceptor(IPublisher publisher) : SaveChangesInterceptor
 {
-    public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(
-        DbContextEventData eventData,
-        InterceptionResult<int> result,
+    // Cap re-dispatch generations so a handler that mutates a tracked
+    // aggregate (and thus raises another event) cannot loop forever.
+    private const int MaxGenerations = 8;
+
+    public override async ValueTask<int> SavedChangesAsync(
+        SaveChangesCompletedEventData eventData,
+        int result,
         CancellationToken cancellationToken = default)
     {
         if (eventData.Context is not null)
         {
             await DispatchAsync(eventData.Context, cancellationToken);
         }
-        return await base.SavingChangesAsync(eventData, result, cancellationToken);
-    }
-
-    public override InterceptionResult<int> SavingChanges(
-        DbContextEventData eventData,
-        InterceptionResult<int> result)
-    {
-        if (eventData.Context is not null)
-        {
-            DispatchAsync(eventData.Context, CancellationToken.None).GetAwaiter().GetResult();
-        }
-        return base.SavingChanges(eventData, result);
+        return await base.SavedChangesAsync(eventData, result, cancellationToken);
     }
 
     private async Task DispatchAsync(DbContext context, CancellationToken ct)
     {
-        while (true)
+        for (var generation = 0; generation < MaxGenerations; generation++)
         {
             var aggregates = context.ChangeTracker
                 .Entries<IAggregate>()
@@ -43,7 +36,7 @@ public sealed class DispatchDomainEventsInterceptor(IPublisher publisher) : Save
 
             if (aggregates.Count == 0)
             {
-                break;
+                return;
             }
 
             foreach (var aggregate in aggregates)
@@ -60,5 +53,11 @@ public sealed class DispatchDomainEventsInterceptor(IPublisher publisher) : Save
                 }
             }
         }
+
+        // If we got here, handlers kept raising events. That's almost
+        // certainly a bug — call it out instead of silently looping.
+        throw new InvalidOperationException(
+            $"Domain-event dispatch exceeded {MaxGenerations} generations. "
+            + "A handler is repeatedly raising new events on tracked aggregates.");
     }
 }
