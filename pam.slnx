@@ -13,4 +13,7 @@
     <Project Path="src/Shared/Pam.Shared.Messaging/Pam.Shared.Messaging.csproj" />
     <Project Path="src/Shared/Pam.Shared/Pam.Shared.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Pam.Players.UnitTests/Pam.Players.UnitTests.csproj" />
+  </Folder>
 </Solution>
