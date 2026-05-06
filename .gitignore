@@ -42,7 +42,8 @@ appsettings.*.Local.json
 *.pfx
 *.cer
 .env
-.env.local
+.env.*
+!.env.example
 
 # Misc
 *.iml

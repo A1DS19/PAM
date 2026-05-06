@@ -1,4 +1,4 @@
-.PHONY: help up down logs ps build restore test run clean migrate-add migrate-update migrate-remove migrate-status zitadel-bootstrap
+.PHONY: help up down logs ps build restore test run dev-api clean migrate-add migrate-update migrate-remove migrate-status zitadel-bootstrap
 
 DC := docker compose
 SRC_DIR := src
@@ -17,6 +17,7 @@ help:
 	@echo "  make build                                - dotnet build"
 	@echo "  make test                                 - dotnet test"
 	@echo "  make run                                  - Run Pam.Api with hot reload"
+	@echo "  make dev-api                              - Apply migrations, source .env.zitadel, watch (used by mprocs)"
 	@echo "  make clean                                - dotnet clean + remove bin/obj"
 	@echo "  make migrate-add MODULE=Players NAME=X     - Add an EF migration"
 	@echo "  make migrate-update MODULE=Players         - Apply migrations"
@@ -52,6 +53,10 @@ test:
 
 run:
 	@dotnet watch --project $(API_PROJ)
+
+dev-api:
+	@$(MAKE) migrate-update MODULE=Players
+	@bash -c 'set -a; [ -f .env.zitadel ] && source .env.zitadel; set +a; dotnet watch --project $(API_PROJ)'
 
 clean:
 	@dotnet clean

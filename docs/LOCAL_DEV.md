@@ -9,30 +9,27 @@
 - `python3` (used by `infra/zitadel/bootstrap.sh`)
 - `curl`
 
-## First-time setup
+## First-time setup (mprocs — recommended)
 
 ```bash
-# 1. Bring up dependencies (Postgres, ZITADEL, RabbitMQ, Redis, Seq).
-#    `make up` waits for ZITADEL's OIDC discovery endpoint to come online,
-#    then runs the bootstrap script that creates the two Orgs
-#    (betanything-eu, betanything-latam-stub) and the pam-player-api Project.
-#    Outputs `.env.zitadel` with the resulting IDs and the admin PAT.
-make up
+mprocs                     # one command; three panes
+```
 
-# 2. Copy the values from .env.zitadel into appsettings.Development.json
-#    (or set them as env vars — see "Secrets" below). Specifically:
-#    - Zitadel:AdminPat
-#    - Brands:Map:betanything-eu:ZitadelOrgId
-#    - Brands:Map:betanything-latam-stub:ZitadelOrgId
+`mprocs.yaml` runs three procs:
 
-# 3. Apply EF migrations.
-make migrate-update MODULE=Players
+- `services` — `docker compose up` (Postgres, ZITADEL, RabbitMQ, Redis, Seq) in foreground
+- `bootstrap` — sleeps 30s for ZITADEL, then `make zitadel-bootstrap`. Creates the two Orgs (`betanything-eu`, `betanything-latam-stub`) + the `pam-player-api` Project. Writes `.env.zitadel`. Exits when done.
+- `api` — sleeps 60s, then `make dev-api` which applies EF migrations, sources `.env.zitadel`, and runs `dotnet watch`.
 
-# 4. Run the API.
-make run
+Switch panes with `Tab`; quit with `q` or `Ctrl-C`.
 
-# 5. (Optional) Run the unit tests.
-make test
+## First-time setup (manual)
+
+```bash
+make up                              # docker compose up -d + ZITADEL bootstrap
+make migrate-update MODULE=Players   # apply EF migrations
+make dev-api                         # source .env.zitadel + dotnet watch
+make test                            # 22 unit tests, ~40ms (separate terminal)
 ```
 
 API at `http://localhost:5000`. Scalar UI at `/scalar/v1`. OpenAPI spec at
