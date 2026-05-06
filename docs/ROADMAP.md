@@ -2,6 +2,25 @@
 
 What's deferred and the trigger that should bring each forward.
 
+## Up next — ordered punch-list
+
+The four items below are the immediate path forward, in order. Each links
+to a detail section further down for the *what* and *why deferred*.
+
+1. **Test gate before module #2** — outbox + integration tests
+   (Testcontainers: real Postgres + real ZITADEL) + arch tests
+   (`NetArchTest.Rules`). See [Outbox](#outbox--transactional-integration-event-publishing)
+   and [Tests](#tests).
+2. **Promote `IBrandRegistry` to a real `Pam.Operators` module** —
+   Brand + Jurisdiction policy registry, persisted, replacing the
+   hardcoded options-bound dictionary. See
+   [`Pam.Operators` promotion](#pamoperators-promotion-brand--jurisdiction-registry).
+3. **Module #2 — KYC** (or Wallet first if the regulatory trigger says
+   so). See the *Modules not yet built* section.
+4. **Legacy `gbs-db` cutover plan** — strangler-fig design *before* any
+   PAM module starts replacing production reads/writes. See
+   [Legacy gbs-db cutover](#legacy-gbs-db-cutover-plan).
+
 ## Deferred — pinned, will land when triggered
 
 ### Outbox + transactional integration-event publishing
@@ -22,18 +41,47 @@ What's deferred and the trigger that should bring each forward.
   columns on every `Entity<TId>`) already covers app-level "who did
   what."
 
+### `Pam.Operators` promotion (Brand + Jurisdiction registry)
+- **What**: replace the hardcoded options-bound `IBrandRegistry` (and the
+  startup `ZitadelBootstrapService`'s ensure-orgs path) with a real
+  module. Tables: `brands` (id, code, name, default_currency,
+  default_language, license refs, branding metadata), `jurisdictions`
+  (code, min_age, kyc_tier_matrix, allowed_currencies, RG defaults),
+  `brand_jurisdictions` (M-to-N: which brand operates under which
+  licenses). Admin endpoints (gated on operator audience) for CRUD.
+  Player aggregate keeps its `BrandId` foreign reference.
+- **Trigger**: before module #2 ships. Adding a new jurisdiction or
+  brand without a real registry means hardcoded changes in N modules.
+- **Note**: ZITADEL Org per Brand stays — the Brand registry holds the
+  ZITADEL Org id alongside the Brand record.
+
 ### Operators audience + admin endpoints
 - **What**: second `JwtBearer` scheme in `Pam.Api` validating tokens issued
   by a dedicated ZITADEL audience for back-office traffic. `Operator.*`
   policies for back-office actions (`SuspendPlayer`, `SearchPlayers`, etc.).
   Admin UI (BlazorServer or React) bound to that audience.
 - **Trigger**: customer support team needs to act on accounts.
-- **Setup**: extend `infra/zitadel/bootstrap.sh` to also create an operators
+- **Setup**: extend `ZitadelBootstrapService` to also create an operators
   Project + audience under a dedicated Org (or under each brand Org,
   depending on the back-office shape). Add a second `AddJwtBearer("operators",
   ...)` block in `Program.cs`. Define `operator.support` /
   `operator.compliance` / `operator.admin` roles via ZITADEL roles or
   authorization grants.
+
+### Legacy gbs-db cutover plan
+- **What**: a written strangler-fig design covering (a) which endpoints
+  route to new PAM vs legacy `GBS-BAS`; (b) data sync direction during
+  cutover (one-way pull from gbs-db into PAM, or dual-write); (c)
+  reconciliation strategy for balances/state that exist in both stores
+  during overlap; (d) rollback story per cutover slice.
+- **Trigger**: before any PAM module starts owning reads/writes for
+  data that production currently serves from `gbs-db`. The 100k
+  existing players, 357 tables, and 1,901 stored procs are a real
+  migration project, not an afterthought.
+- **Out-of-scope until then**: the POC's per-Brand Player records
+  (decision #14) deliberately diverge from `gbs-db`'s pattern (a) — the
+  cutover plan is where "split the legacy single row into per-brand
+  rows" gets concrete.
 
 ### Distributed rate limiter
 - **What**: replace the in-memory `auth-sensitive` policy with a Redis-backed
