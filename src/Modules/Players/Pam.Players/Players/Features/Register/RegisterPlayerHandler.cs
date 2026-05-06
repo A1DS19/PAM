@@ -65,16 +65,12 @@ public sealed class RegisterPlayerHandler(
 
             db.Players.Add(player);
             await db.SaveChangesAsync(cancellationToken);
-
-            await identity.SendVerifyEmailAsync(keycloakId, cancellationToken);
-
-            return playerId.Value;
         }
         catch (Exception ex)
         {
             logger.LogError(
                 ex,
-                "Registration failed after Keycloak user create; rolling back Keycloak user {KeycloakId}",
+                "Registration failed before DB save committed; rolling back Keycloak user {KeycloakId}",
                 keycloakId.Value
             );
             try
@@ -91,5 +87,23 @@ public sealed class RegisterPlayerHandler(
             }
             throw;
         }
+
+        // Player is durable past this point. Email-send failure must not
+        // delete the Keycloak user — that would orphan the saved row.
+        try
+        {
+            await identity.SendVerifyEmailAsync(keycloakId, cancellationToken);
+        }
+        catch (Exception emailEx)
+        {
+            logger.LogWarning(
+                emailEx,
+                "Failed to trigger verify-email for {KeycloakId}; player {PlayerId} is registered but unverified",
+                keycloakId.Value,
+                playerId.Value
+            );
+        }
+
+        return playerId.Value;
     }
 }
