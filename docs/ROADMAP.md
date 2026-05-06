@@ -30,6 +30,19 @@ What's deferred and the trigger that should bring each forward.
   second `AddJwtBearer("operators", ...)` block. Define
   `operator.support`/`operator.compliance`/`operator.admin` realm roles.
 
+### ZITADEL spike (alternative to Keycloak)
+- **What**: 2-day evaluation of ZITADEL as a Keycloak replacement. ZITADEL's
+  Org/Project model maps directly onto our planned `Partner` aggregate (the
+  Keycloak two-realm pattern is awkward for that). Lighter footprint (Go
+  binary vs JVM), gRPC API, native multi-tenancy.
+- **Trigger**: the "Operators realm + admin endpoints" milestone above. If
+  we're about to build a second realm, this is the moment to question
+  whether the IDP itself is the right shape.
+- **Out-of-scope until then**: the `IIdentityProvider` interface in
+  `Pam.Players` is already the swap seam. As long as no Keycloak-specific
+  concept (realm name, custom-attribute API shape) leaks past it, the
+  decision stays cheap.
+
 ### Distributed rate limiter
 - **What**: replace the in-memory `auth-sensitive` policy with a Redis-backed
   one (`RedisRateLimiting` package or similar).
@@ -68,13 +81,15 @@ What's deferred and the trigger that should bring each forward.
   and prod (currently hardcoded dev values in compose).
 
 ### Tests
-- **What**: unit tests for domain (`Player.Register`, value-object
-  validation), integration tests with Testcontainers (real Postgres, real
-  Keycloak), architecture tests via NetArchTest (module-boundary
-  enforcement).
-- **Trigger**: before we have any module past Player. The user's call:
-  "we won't test everything, only critical modules." Player is critical
-  enough to back-fill once a few features stabilize.
+- **Done**: pure-domain unit tests in `tests/Pam.Players.UnitTests/`
+  covering `Player.Register` (age boundaries, event raising) and the four
+  value objects, on xUnit 3 + FluentAssertions 7.
+- **What's left**: integration tests with Testcontainers (real Postgres,
+  real Keycloak) for the registration flow end-to-end; architecture tests
+  via `NetArchTest.Rules` for module-boundary enforcement.
+- **Trigger**: before module #2 lands. Architecture tests in particular
+  pay for themselves the moment a second module makes it possible to
+  cross-reference internal types.
 
 ## Smoke-test caveats found and tracked
 

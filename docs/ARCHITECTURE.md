@@ -104,10 +104,19 @@ implementations and infrastructure code where DI is impractical.
 
 ## Audit columns
 
-`Entity<TId>` carries `CreatedAt`, `CreatedBy`, `LastModifiedAt`,
-`LastModifiedBy`. The `AuditableSaveChangesInterceptor` stamps these on every
-save using `IClock` and `IUserContext`. `IUserContext` reads from JWT claims
-(`sub`, falling back to `player_id`).
+`Entity<TId>` carries `CreatedAt`, `CreatedByType`, `CreatedById`,
+`LastModifiedAt`, `LastModifiedByType`, `LastModifiedById`. The
+`AuditableSaveChangesInterceptor` stamps these on every save using `IClock`
+and `IUserContext`.
+
+`IUserContext.Current` returns a typed `Actor(ActorType, Id)` — never null,
+defaulting to `Actor.System` for background work and `Actor.Anonymous` for
+unauthenticated requests. `HttpUserContext` maps the `player_id` JWT claim
+to `ActorType.Player`; an authenticated request without `player_id` is
+treated as `ActorType.Operator` (placeholder until the operators realm
+lands). This is the regulator-checkable discriminator: a `Player` self-
+suspending vs an `Operator` suspending them are distinguishable in the
+audit columns without parsing.
 
 This is application audit logging, not regulatory audit logging. Regulatory
 audit (immutable, cryptographically chained) is a separate `Audit` module
@@ -123,7 +132,7 @@ Two distinct concerns:
 | Inside one module | Across modules |
 | `Pam.Players/Players/Events/` | `Pam.Players.Contracts/Players/Events/` |
 | Internal — refactor freely | Public contract — versioned, breaking changes are real |
-| Dispatched in-process by `DispatchDomainEventsInterceptor` (pre-save) | Outbox + MassTransit (when consumers arrive) |
+| Dispatched in-process by `DispatchDomainEventsInterceptor` (post-save) | Outbox + MassTransit (when consumers arrive) |
 | Naming: `PlayerRegistered` | Naming: `PlayerRegisteredIntegrationEvent` |
 
 Domain events do not implement MediatR's `INotification`. They implement our
@@ -171,9 +180,19 @@ prod they're injected as env vars by whatever orchestrator runs the API
 
 ## Outbox is not wired yet
 
-Domain events dispatch pre-save (atomic with the DB write through the
-interceptor). Integration event publishing is currently a no-op (the domain
-handler logs). When the first cross-module consumer ships, add MassTransit's
+Domain events dispatch post-save: the interceptor overrides
+`SavedChangesAsync` so handlers see the committed state. The dispatch loop
+is bounded at 8 generations to catch handlers that recursively raise events
+on tracked aggregates.
+
+Trade-off: post-save dispatch is no longer atomic with the DB write — a
+crash between the commit and the handler's side effect leaves the row
+without the side effect. For in-process handlers that's acceptable
+(restart picks up via change-data scans where needed); for cross-module
+broker publishing it isn't, which is exactly what the outbox solves.
+
+Integration event publishing is currently a no-op (the domain handler
+logs). When the first cross-module consumer ships, add MassTransit's
 EF Core outbox to `PlayersDbContext` so integration events persist
 transactionally with the aggregate write.
 
