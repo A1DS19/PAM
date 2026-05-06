@@ -1,4 +1,4 @@
-.PHONY: help up down logs ps build restore test run clean migrate-add migrate-update migrate-remove migrate-status
+.PHONY: help up down logs ps build restore test run clean migrate-add migrate-update migrate-remove migrate-status zitadel-bootstrap
 
 DC := docker compose
 SRC_DIR := src
@@ -8,10 +8,11 @@ DBCONTEXT_OF_MODULE = $(MODULE)DbContext
 
 help:
 	@echo "Available commands:"
-	@echo "  make up                                   - Start docker-compose dependencies"
+	@echo "  make up                                   - Start docker-compose dependencies + bootstrap ZITADEL"
 	@echo "  make down                                 - Stop docker-compose"
 	@echo "  make logs SERVICE=postgres                - Tail compose logs for a service"
 	@echo "  make ps                                   - List compose services"
+	@echo "  make zitadel-bootstrap                    - Re-run ZITADEL bootstrap (orgs + project)"
 	@echo "  make restore                              - dotnet restore"
 	@echo "  make build                                - dotnet build"
 	@echo "  make test                                 - dotnet test"
@@ -24,9 +25,12 @@ help:
 
 up:
 	$(DC) up -d
-	@echo "Waiting for Keycloak to be ready..."
-	@until curl -sf http://localhost:8080/realms/master >/dev/null 2>&1; do sleep 2; done
-	@./infra/keycloak/setup/declare-player-id.sh
+	@echo "Waiting for ZITADEL to be ready..."
+	@until curl -sf http://localhost:8080/.well-known/openid-configuration >/dev/null 2>&1; do sleep 2; done
+	@$(MAKE) zitadel-bootstrap
+
+zitadel-bootstrap:
+	@./infra/zitadel/bootstrap.sh
 
 down:
 	$(DC) down

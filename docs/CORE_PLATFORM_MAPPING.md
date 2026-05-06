@@ -31,7 +31,7 @@ translations, and limits.
 | Clients > Emails & SMSes / Provider Settings | `Pam.Notifications` + `Pam.Players` | deferred |
 | Online Clients (Real Time) | streaming projection over `Pam.Players` sessions | deferred |
 | Affiliates + Affiliate admin panel | `Pam.Affiliates` (separate module + own auth/admin UI) | deferred |
-| Users & Agents + Roles | `Pam.Operators` + Keycloak `operators` realm | deferred |
+| Users & Agents + Roles | `Pam.Operators` + ZITADEL operators audience | deferred |
 | Payments (global) | `Pam.Wallets` query side | deferred |
 | Bets / Internet Bets / Bet Shops | `Pam.Bets` + `Pam.BetShops` | deferred |
 | Bonuses (Common + Triggers + Conditions DSL) | `Pam.Bonuses` | deferred (own design pass) |
@@ -54,23 +54,29 @@ These are the architectural calls that are cheap if made before scaling out
 the modules and very expensive afterwards. They're load-bearing for the
 whole product, not for any one module.
 
-### 1. Multi-tenancy is a first-class aggregate, not a column
+### 1. Multi-brand is a first-class aggregate, not a column
 
-Core Platform's "Partner" is everywhere but feels retrofitted. We bake it in
-from day one:
+Core Platform's "Partner" is everywhere but feels retrofitted. We bake it
+in from day one — under the term **Brand** (we're a single company running
+multiple consumer-facing brands; "Partner" is a B2B term that doesn't fit):
 
-- A `Partner` aggregate in `Pam.Partners` is the first non-Player module.
-- Every other aggregate carries a `PartnerId` foreign reference.
-- Every `DbContext` has a `PartnerScope` filter that's applied as a
-  global query filter (EF `HasQueryFilter`) so cross-partner reads are
-  impossible by default.
-- A `IPartnerContext` (resolved from the JWT or an explicit operator
-  selection) drives the scope.
-- Operator endpoints can elevate to cross-partner access via a specific
+- A `Brand` aggregate in `Pam.Operators` is the first non-Player concept
+  (POC ships a hardcoded `IBrandRegistry` until the module lands).
+- Every other aggregate carries a `BrandId` foreign reference.
+- Brand maps to a ZITADEL Org. The same physical human registering on
+  Brand A and Brand B is two distinct `Player` rows (per-brand records);
+  cross-brand identity linking is a future optional `Subject` concept,
+  introduced only when regulation demands it.
+- A `IBrandContext` (resolved from the JWT's Org claim or, for anonymous
+  registration, from the `X-Brand` header) drives runtime scoping.
+- Each `DbContext` will gain a global query filter on `BrandId` so
+  cross-brand reads are impossible by default once back-office endpoints
+  arrive.
+- Operator endpoints can elevate to cross-brand access via a specific
   policy (`operator.platformAdmin`).
 
 Cost of doing this in v2: rewriting every query in every module. Cost of
-doing it now: one interceptor + one filter per DbContext. Easy choice.
+doing it now: one filter per DbContext. Easy choice.
 
 ### 2. Wallet is double-entry from day one
 
@@ -146,9 +152,9 @@ Core Platform's lockout is primitive: 5 wrong passwords → "Force Block"
 that requires support intervention. Their state machine is
 Active/Blocked/Disabled/Force Block/Suspended.
 
-We have Keycloak driving:
+We have ZITADEL driving:
 
-- Configurable brute-force protection per realm.
+- Configurable brute-force protection per Org / instance policy.
 - MFA (TOTP, WebAuthn, SMS).
 - Session revocation tied to self-exclusion (`Limits` module emits
   `SelfExclusionActivated` → `Pam.Players` calls
@@ -156,7 +162,7 @@ We have Keycloak driving:
 - Federation for operators (Azure AD / Google Workspace).
 - Concurrent session limits, session listing, "log out everywhere."
 
-Their five player states map onto our richer state machine + Keycloak
+Their five player states map onto our richer state machine + ZITADEL
 session/credential state, with each transition emitting a domain event
 that Audit consumes.
 
@@ -212,12 +218,14 @@ operators must manually upload. We do:
 
 Ordered by what unblocks the most subsequent modules:
 
-1. **Pam.Partners (multi-tenant foundation)** — even before Wallet.
-   Without this, every later module has to be retrofitted.
+1. **Pam.Operators (Brand + Jurisdiction registry)** — even before Wallet.
+   The POC ships a hardcoded `IBrandRegistry`; promote to a real module
+   before module #2. Without this, every later module has to be
+   retrofitted.
 2. **Pam.Players KYC + Sessions + Limits/Exclusions** — extending the
    existing module. Pure additions, no boundary changes.
-3. **Pam.Operators + operators Keycloak realm + admin endpoints** — now
-   we can act on accounts. Unlocks back-office UI prototyping.
+3. **Operator audience (ZITADEL Project) + admin endpoints** — now we can
+   act on accounts. Unlocks back-office UI prototyping.
 4. **Pam.Wallets (double-entry ledger)** — the most regulated module.
    Outbox is non-negotiable here.
 5. **Pam.GameCatalog + Pam.GameWallet (separate host)** — enables real
@@ -231,6 +239,6 @@ Ordered by what unblocks the most subsequent modules:
 10. **Pam.Reporting** — read-side projections over events; can be
     incrementally added.
 
-The first-month-of-real-work focus is items 1-3 (Partners + KYC + Sessions
+The first-month-of-real-work focus is items 1-3 (Brands + KYC + Sessions
 + Limits + Operators) plus the back-office UI scaffold. Item 4 (Wallets)
 is the next major milestone after that.

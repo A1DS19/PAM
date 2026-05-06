@@ -70,18 +70,6 @@
   </ItemGroup>
 
   <!--
-    Keycloak.AuthServices 3.0 is a breaking rewrite (AddKeycloakAuthentication
-    was removed; Refit/IdentityModel deps dropped). Currently unused in code —
-    PAM uses the standard AddJwtBearer flow — so the bump is a forward-pin
-    only. Migrate-on-first-use.
-  -->
-  <ItemGroup Label="Identity / Keycloak">
-    <PackageVersion Include="Keycloak.AuthServices.Authentication" Version="3.0.0" />
-    <PackageVersion Include="Keycloak.AuthServices.Authorization" Version="3.0.0" />
-    <PackageVersion Include="Keycloak.AuthServices.Sdk" Version="3.0.0" />
-  </ItemGroup>
-
-  <!--
     SecurityCodeScan.VS2019 was removed (abandoned since 2022-09).
     Microsoft.CodeAnalysis.NetAnalyzers covers the gap (on by default with
     AnalysisMode=All in Directory.Build.props); layer external SAST in CI
@@ -110,7 +98,6 @@
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.11.0" />
     <PackageVersion Include="Testcontainers.RabbitMq" Version="4.11.0" />
     <PackageVersion Include="Testcontainers.Redis" Version="4.11.0" />
-    <PackageVersion Include="Testcontainers.Keycloak" Version="4.11.0" />
     <PackageVersion Include="NetArchTest.Rules" Version="1.3.2" />
     <PackageVersion Include="Microsoft.AspNetCore.Mvc.Testing" Version="10.0.7" />
   </ItemGroup>

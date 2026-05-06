@@ -7,6 +7,7 @@ public sealed record PlayerRegisteredDomainEvent(
     Guid EventId,
     DateTimeOffset OccurredAt,
     PlayerId PlayerId,
+    string BrandId,
     string IdentityProviderId,
     string Jurisdiction
 ) : IDomainEvent;

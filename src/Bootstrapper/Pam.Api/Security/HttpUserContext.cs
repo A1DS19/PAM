@@ -16,22 +16,19 @@ public sealed class HttpUserContext(IHttpContextAccessor http) : IUserContext
                 return Actor.Anonymous;
             }
 
-            // Players-realm tokens carry the player_id custom claim mapped
-            // from the Keycloak user attribute. When that claim is present
-            // the request is acting as a Player.
-            var playerId = user.FindFirst("player_id")?.Value;
-            if (!string.IsNullOrEmpty(playerId))
+            // The IDP `sub` is the canonical identity-provider user id. PAM's
+            // own PlayerId is held server-side on the Player aggregate
+            // (`identity_provider_id` column) and resolved by lookup when
+            // needed; we don't claim-stuff it into the JWT.
+            var sub = user.FindFirst("sub")?.Value;
+            if (string.IsNullOrEmpty(sub))
             {
-                return new Actor(ActorType.Player, playerId);
+                return Actor.Anonymous;
             }
 
-            // Future: operators-realm tokens (no player_id claim). For now
-            // an authenticated request without a player_id is unreachable —
-            // the only registered auth scheme is "players" and that scheme
-            // always emits player_id. Until the operators realm lands, fall
-            // back to the JWT sub so audit columns still record an id.
-            var sub = user.FindFirst("sub")?.Value;
-            return string.IsNullOrEmpty(sub) ? Actor.Anonymous : new Actor(ActorType.Operator, sub);
+            // Until the operators audience lands, any authenticated request
+            // through the "players" scheme is acting as a Player.
+            return new Actor(ActorType.Player, sub);
         }
     }
 

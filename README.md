@@ -7,13 +7,15 @@ scale or team-org demands it.
 ## Status
 
 Single module (`Pam.Players`) with one feature: `POST /v1/auth/register`.
-Everything else (Wallets, KYC, Limits, Bonuses, Bets, Operators, Audit,
-CMS, Reporting) is deferred. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
+Multi-brand foundation in place (Brand → ZITADEL Org). Everything else
+(Wallets, KYC, Limits, Bonuses, Bets, Operators, Audit, CMS, Reporting) is
+deferred. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Stack
 
 - **.NET 10** · ASP.NET Core, EF Core 10, Postgres 17
-- **Identity:** Keycloak 26 (players realm; operators realm pending)
+- **Identity:** ZITADEL (Org-per-Brand; player audience today, operator
+  audience pending)
 - **Endpoints:** Carter (vertical slices), Scalar OpenAPI in dev
 - **Mediator + validation:** MediatR (held at 12.4.1, last MIT) +
   FluentValidation 12
@@ -31,20 +33,21 @@ documented in [`docs/DECISIONS.md`](docs/DECISIONS.md).
 ## Quick start
 
 ```bash
-make up                              # Postgres, Keycloak, RabbitMQ, etc.
+make up                              # Postgres, ZITADEL, RabbitMQ, etc. + bootstrap
 make migrate-update MODULE=Players   # apply EF migrations
 make run                             # dotnet watch
-make test                            # 21 unit tests, ~40ms
+make test                            # 22 unit tests, ~40ms
 ```
 
-API at `http://localhost:5000`. Scalar UI at `/scalar/v1`. Smoke test in
+API at `http://localhost:5000`. Scalar UI at `/scalar/v1`. ZITADEL console
+at `http://localhost:8080`. Smoke test in
 [`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md).
 
 ## Documentation
 
 | Doc | Purpose |
 |---|---|
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | The **why** — module boundaries, identity model, audit, error model, time, secrets, domain vs integration events, aggregate sizing rules. |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | The **why** — module boundaries, identity model, brand model, audit, error model, time, secrets, domain vs integration events, aggregate sizing rules. |
 | [`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md) | First-time setup, service ports, EF migration commands, feature template, secrets, OpenAPI/Scalar. |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Deferred work and the trigger that brings each forward. |
 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | ADR-style log of architectural decisions. |
@@ -66,8 +69,7 @@ src/
 tests/
   Pam.Players.UnitTests/         pure-domain tests on xUnit 3
 infra/
-  keycloak/realms/               realm imports
-  keycloak/setup/                post-import scripts
+  zitadel/bootstrap.sh           idempotent ZITADEL Org/Project setup
 docs/                            see table above
 ```
 

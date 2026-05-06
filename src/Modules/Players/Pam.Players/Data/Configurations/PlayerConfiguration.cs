@@ -11,12 +11,17 @@ public sealed class PlayerConfiguration : IEntityTypeConfiguration<Player>
         builder.ToTable("players");
 
         builder.HasKey(p => p.Id);
-        builder.Property(p => p.Id)
+        builder
+            .Property(p => p.Id)
             .HasConversion(id => id.Value, value => new PlayerId(value))
             .ValueGeneratedNever()
             .HasColumnName("id");
 
-        builder.Property(p => p.IdentityProviderId)
+        builder.Property(p => p.BrandId).HasColumnName("brand_id").HasMaxLength(64).IsRequired();
+        builder.HasIndex(p => p.BrandId);
+
+        builder
+            .Property(p => p.IdentityProviderId)
             .HasColumnName("identity_provider_id")
             .HasMaxLength(64)
             .IsRequired();
@@ -27,9 +32,14 @@ public sealed class PlayerConfiguration : IEntityTypeConfiguration<Player>
             email =>
             {
                 email.Property(e => e.Value).HasColumnName("email").HasMaxLength(254).IsRequired();
-                email.HasIndex(e => e.Value).IsUnique();
             }
         );
+
+        // Per-brand email uniqueness — same human may register separate
+        // accounts on different brands. The composite unique index on
+        // (brand_id, email) is created via raw SQL in the migration; EF
+        // Core's lambda-based HasIndex does not support property paths
+        // through owned types.
 
         builder.OwnsOne(
             p => p.Name,

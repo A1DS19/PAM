@@ -18,45 +18,64 @@ services:
       timeout: 5s
       retries: 10
 
-  keycloak-postgres:
+  zitadel-postgres:
     image: postgres:17
-    container_name: pam-keycloak-postgres
+    container_name: pam-zitadel-postgres
     environment:
-      POSTGRES_USER: keycloak
-      POSTGRES_PASSWORD: keycloak_dev_password
-      POSTGRES_DB: keycloak
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: zitadel
     ports:
       - "5433:5432"
     volumes:
-      - pam-keycloak-postgres:/var/lib/postgresql/data
+      - pam-zitadel-postgres:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
       retries: 10
 
-  keycloak:
-    image: quay.io/keycloak/keycloak:26.0
-    container_name: pam-keycloak
-    command: ["start-dev", "--import-realm"]
+  zitadel:
+    image: ghcr.io/zitadel/zitadel:latest
+    container_name: pam-zitadel
+    restart: on-failure
+    command: 'start-from-init --masterkey "MasterkeyNeedsToHave32Characters" --tlsMode disabled'
     environment:
-      KC_BOOTSTRAP_ADMIN_USERNAME: admin
-      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
-      KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://keycloak-postgres:5432/keycloak
-      KC_DB_USERNAME: keycloak
-      KC_DB_PASSWORD: keycloak_dev_password
-      KC_HEALTH_ENABLED: "true"
-      KC_HTTP_ENABLED: "true"
-      KC_HOSTNAME_STRICT: "false"
-      KC_HOSTNAME_STRICT_HTTPS: "false"
+      ZITADEL_EXTERNALSECURE: "false"
+      ZITADEL_EXTERNALDOMAIN: localhost
+      ZITADEL_EXTERNALPORT: 8080
+      ZITADEL_PORT: 8080
+      ZITADEL_TLS_ENABLED: "false"
+      ZITADEL_DATABASE_POSTGRES_HOST: zitadel-postgres
+      ZITADEL_DATABASE_POSTGRES_PORT: 5432
+      ZITADEL_DATABASE_POSTGRES_DATABASE: zitadel
+      ZITADEL_DATABASE_POSTGRES_USER_USERNAME: zitadel
+      ZITADEL_DATABASE_POSTGRES_USER_PASSWORD: zitadel
+      ZITADEL_DATABASE_POSTGRES_USER_SSL_MODE: disable
+      ZITADEL_DATABASE_POSTGRES_ADMIN_USERNAME: postgres
+      ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD: postgres
+      ZITADEL_DATABASE_POSTGRES_ADMIN_SSL_MODE: disable
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_USERNAME: zitadel-admin
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORD: Password1!
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORDCHANGEREQUIRED: "false"
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_USERNAME: zitadel-admin-sa
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_NAME: Bootstrap SA
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_SCOPES: "openid urn:zitadel:iam:org:project:id:zitadel:aud"
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_EXPIRATIONDATE: "2030-01-01T00:00:00Z"
+      ZITADEL_FIRSTINSTANCE_PATPATH: /machinekey/zitadel-admin-sa.pat
     ports:
       - "8080:8080"
     volumes:
-      - ./infra/keycloak/realms:/opt/keycloak/data/import:ro
+      - pam-zitadel-machinekey:/machinekey
     depends_on:
-      keycloak-postgres:
+      zitadel-postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/app/zitadel", "ready", "--config", "/zitadel.yaml"]
+      interval: 10s
+      timeout: 30s
+      retries: 5
+      start_period: 30s
 
   redis:
     image: redis:7-alpine
@@ -102,7 +121,8 @@ services:
 
 volumes:
   pam-postgres:
-  pam-keycloak-postgres:
+  pam-zitadel-postgres:
+  pam-zitadel-machinekey:
   pam-redis:
   pam-rabbitmq:
   pam-seq:
