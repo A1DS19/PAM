@@ -22,9 +22,14 @@ public sealed class RegisterPlayerHandler(
     {
         var emailNormalized = cmd.Email.Trim().ToLowerInvariant();
 
+        // Email is unique per (BrandId, Email) — different brands may share
+        // the same physical user as separate accounts.
         var exists = await db
             .Players.AsNoTracking()
-            .AnyAsync(p => p.Email.Value == emailNormalized, cancellationToken);
+            .AnyAsync(
+                p => p.BrandId == cmd.BrandId && p.Email.Value == emailNormalized,
+                cancellationToken
+            );
 
         if (exists)
         {
@@ -36,17 +41,14 @@ public sealed class RegisterPlayerHandler(
 
         var playerId = PlayerId.New();
 
-        var keycloakId = await identity.CreateUserAsync(
+        var idpId = await identity.CreateUserAsync(
             new CreateIdentityUser(
+                BrandId: cmd.BrandId,
                 Email: emailNormalized,
                 FirstName: cmd.FirstName,
                 LastName: cmd.LastName,
                 Password: cmd.Password,
-                RequireEmailVerify: true,
-                Attributes: new Dictionary<string, string>(StringComparer.Ordinal)
-                {
-                    ["player_id"] = playerId.Value.ToString(),
-                }
+                RequireEmailVerify: true
             ),
             cancellationToken
         );
@@ -55,7 +57,8 @@ public sealed class RegisterPlayerHandler(
         {
             var player = Player.Register(
                 id: playerId,
-                identityProviderId: keycloakId.Value,
+                brandId: cmd.BrandId,
+                identityProviderId: idpId.Value,
                 email: Email.Create(emailNormalized),
                 name: new PersonalName(cmd.FirstName, cmd.LastName),
                 dateOfBirth: new DateOfBirth(cmd.DateOfBirth),
@@ -70,36 +73,36 @@ public sealed class RegisterPlayerHandler(
         {
             logger.LogError(
                 ex,
-                "Registration failed before DB save committed; rolling back Keycloak user {KeycloakId}",
-                keycloakId.Value
+                "Registration failed before DB save committed; rolling back IDP user {IdpId}",
+                idpId.Value
             );
             try
             {
-                await identity.DeleteUserAsync(keycloakId, cancellationToken);
+                await identity.DeleteUserAsync(idpId, cancellationToken);
             }
             catch (Exception cleanupEx)
             {
                 logger.LogError(
                     cleanupEx,
-                    "Failed to rollback Keycloak user {KeycloakId} after registration failure",
-                    keycloakId.Value
+                    "Failed to rollback IDP user {IdpId} after registration failure",
+                    idpId.Value
                 );
             }
             throw;
         }
 
         // Player is durable past this point. Email-send failure must not
-        // delete the Keycloak user — that would orphan the saved row.
+        // delete the IDP user — that would orphan the saved row.
         try
         {
-            await identity.SendVerifyEmailAsync(keycloakId, cancellationToken);
+            await identity.SendVerifyEmailAsync(idpId, cancellationToken);
         }
         catch (Exception emailEx)
         {
             logger.LogWarning(
                 emailEx,
-                "Failed to trigger verify-email for {KeycloakId}; player {PlayerId} is registered but unverified",
-                keycloakId.Value,
+                "Failed to trigger verify-email for {IdpId}; player {PlayerId} is registered but unverified",
+                idpId.Value,
                 playerId.Value
             );
         }

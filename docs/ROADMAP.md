@@ -22,34 +22,24 @@ What's deferred and the trigger that should bring each forward.
   columns on every `Entity<TId>`) already covers app-level "who did
   what."
 
-### Operators realm + admin endpoints
-- **What**: second Keycloak realm `operators`, second `JwtBearer` scheme in
-  `Pam.Api`, `Operator.*` policies for back-office actions
-  (`SuspendPlayer`, `SearchPlayers`, etc.). Admin UI (BlazorServer or React)
-  bound to the operators realm.
+### Operators audience + admin endpoints
+- **What**: second `JwtBearer` scheme in `Pam.Api` validating tokens issued
+  by a dedicated ZITADEL audience for back-office traffic. `Operator.*`
+  policies for back-office actions (`SuspendPlayer`, `SearchPlayers`, etc.).
+  Admin UI (BlazorServer or React) bound to that audience.
 - **Trigger**: customer support team needs to act on accounts.
-- **Setup**: drop `operators-realm.json` next to `players-realm.json`. Add a
-  second `AddJwtBearer("operators", ...)` block. Define
-  `operator.support`/`operator.compliance`/`operator.admin` realm roles.
-
-### ZITADEL spike (alternative to Keycloak)
-- **What**: 2-day evaluation of ZITADEL as a Keycloak replacement. ZITADEL's
-  Org/Project model maps directly onto our planned `Partner` aggregate (the
-  Keycloak two-realm pattern is awkward for that). Lighter footprint (Go
-  binary vs JVM), gRPC API, native multi-tenancy.
-- **Trigger**: the "Operators realm + admin endpoints" milestone above. If
-  we're about to build a second realm, this is the moment to question
-  whether the IDP itself is the right shape.
-- **Out-of-scope until then**: the `IIdentityProvider` interface in
-  `Pam.Players` is already the swap seam. As long as no Keycloak-specific
-  concept (realm name, custom-attribute API shape) leaks past it, the
-  decision stays cheap.
+- **Setup**: extend `infra/zitadel/bootstrap.sh` to also create an operators
+  Project + audience under a dedicated Org (or under each brand Org,
+  depending on the back-office shape). Add a second `AddJwtBearer("operators",
+  ...)` block in `Program.cs`. Define `operator.support` /
+  `operator.compliance` / `operator.admin` roles via ZITADEL roles or
+  authorization grants.
 
 ### Distributed rate limiter
 - **What**: replace the in-memory `auth-sensitive` policy with a Redis-backed
   one (`RedisRateLimiting` package or similar).
 - **Trigger**: running multiple Pam.Api replicas. Until then, the in-memory
-  limiter stacked with Keycloak's brute-force protection is enough.
+  limiter stacked with ZITADEL's brute-force protection is enough.
 
 ### OTLP exporter + collector
 - **What**: add `.AddOtlpExporter()` on the OTel tracing/metrics builders;
@@ -57,13 +47,13 @@ What's deferred and the trigger that should bring each forward.
 - **Trigger**: production, or first time you need to debug a multi-service
   flow. Until then, instrumentation is collected and discarded.
 
-### Reconciliation job for orphan Keycloak users
-- **What**: nightly job that lists Keycloak users in the `players` realm
-  with no matching PAM player and either deletes them or pages support.
+### Reconciliation job for orphan ZITADEL users
+- **What**: nightly job that lists ZITADEL users (per brand Org) with no
+  matching PAM player and either deletes them or pages support.
 - **Trigger**: when registration volume is non-trivial. The current
   best-effort `DeleteUserAsync` rollback in `RegisterPlayerHandler` covers
   the common case but has a tiny window where both the DB save and the
-  Keycloak delete can fail.
+  ZITADEL delete can fail.
 
 ### CorrelationId middleware
 - **What**: explicit `X-Correlation-Id` middleware that flows through
@@ -87,24 +77,16 @@ What's deferred and the trigger that should bring each forward.
 
 ### Tests
 - **Done**: pure-domain unit tests in `tests/Pam.Players.UnitTests/`
-  covering `Player.Register` (age boundaries, event raising) and the four
-  value objects, on xUnit 3 + FluentAssertions 7.
+  covering `Player.Register` (age boundaries, brand carry-through, event
+  raising) and the four value objects, on xUnit 3 + FluentAssertions 7.
 - **What's left**: integration tests with Testcontainers (real Postgres,
-  real Keycloak) for the registration flow end-to-end; architecture tests
+  real ZITADEL) for the registration flow end-to-end; architecture tests
   via `NetArchTest.Rules` for module-boundary enforcement.
 - **Trigger**: before module #2 lands. Architecture tests in particular
   pay for themselves the moment a second module makes it possible to
   cross-reference internal types.
 
 ## Smoke-test caveats found and tracked
-
-### Keycloak User Profile schema declaration
-Keycloak v25+ silently drops user attributes not declared in the realm's
-user-profile schema. We currently use a one-shot post-import script
-(`infra/keycloak/setup/declare-player-id.sh`) wired into `make up` to add
-`player_id` to the `players` realm profile. Long-term: bake this into the
-realm import format if Keycloak supports it natively in a later version, or
-package it as a Keycloak SPI / config-cli step in the deployment pipeline.
 
 ### Redis + Seq compose port conflicts
 `docker-compose.yml` declares both, but they default to standard ports
@@ -126,8 +108,8 @@ In priority order for a regulated sportsbook/casino PAM:
    `IPlayerInitiated` command is checked before the handler.
 4. **Bonus** — grants, wagering progress, expiry. Subscribes to wallet events.
 5. **Notifications** — email/SMS/push. Subscribes to Player/KYC/Wallet events.
-6. **Operator** — back-office user management (when the operator realm and
-   admin endpoints land).
+6. **Operator** — back-office user management (when the operator audience
+   and admin endpoints land).
 7. **Audit** — append-only, subscribes to everything (see above).
 
 Game wallet ingress (`Pam.GameWallet`) is a **separate host**, not a module.

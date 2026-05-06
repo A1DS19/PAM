@@ -11,6 +11,7 @@ namespace Pam.Players.UnitTests.Players;
 public class PlayerRegistrationTests
 {
     private static readonly DateTimeOffset Now = new(2026, 5, 5, 12, 0, 0, TimeSpan.Zero);
+    private const string Brand = "betanything-eu";
 
     [Fact]
     public void Register_creates_pending_player_with_audit_fields_unset()
@@ -25,7 +26,15 @@ public class PlayerRegistrationTests
     }
 
     [Fact]
-    public void Register_raises_PlayerRegistered_event()
+    public void Register_carries_brand_id()
+    {
+        var player = RegisterAt(age: 30);
+
+        player.BrandId.Should().Be(Brand);
+    }
+
+    [Fact]
+    public void Register_raises_PlayerRegistered_event_with_brand()
     {
         var player = RegisterAt(age: 30);
 
@@ -34,7 +43,8 @@ public class PlayerRegistrationTests
 
         var ev = (PlayerRegisteredDomainEvent)player.DomainEvents[0];
         ev.PlayerId.Should().Be(player.Id);
-        ev.IdentityProviderId.Should().Be("kc-sub-123");
+        ev.BrandId.Should().Be(Brand);
+        ev.IdentityProviderId.Should().Be("idp-sub-123");
         ev.Jurisdiction.Should().Be("US-NY");
         ev.OccurredAt.Should().Be(Now);
     }
@@ -49,16 +59,21 @@ public class PlayerRegistrationTests
     [Fact]
     public void Register_one_day_below_minimum_age_throws()
     {
-        var dob = new DateOfBirth(DateOnly.FromDateTime(Now.UtcDateTime).AddYears(-Player.MinimumAge).AddDays(1));
+        var dob = new DateOfBirth(
+            DateOnly.FromDateTime(Now.UtcDateTime).AddYears(-Player.MinimumAge).AddDays(1)
+        );
 
-        var act = () => Player.Register(
-            id: PlayerId.New(),
-            identityProviderId: "kc-sub-123",
-            email: Email.Create("alice@example.com"),
-            name: new PersonalName("Alice", "Tester"),
-            dateOfBirth: dob,
-            jurisdiction: new Jurisdiction("US", "NY"),
-            asOfUtc: Now);
+        var act = () =>
+            Player.Register(
+                id: PlayerId.New(),
+                brandId: Brand,
+                identityProviderId: "idp-sub-123",
+                email: Email.Create("alice@example.com"),
+                name: new PersonalName("Alice", "Tester"),
+                dateOfBirth: dob,
+                jurisdiction: new Jurisdiction("US", "NY"),
+                asOfUtc: Now
+            );
 
         var ex = act.Should().Throw<BusinessRuleViolationException>().Which;
         ex.Code.Should().Be(PlayerErrors.AgeBelowMinimum);
@@ -80,11 +95,13 @@ public class PlayerRegistrationTests
         var dob = new DateOfBirth(DateOnly.FromDateTime(Now.UtcDateTime).AddYears(-age));
         return Player.Register(
             id: PlayerId.New(),
-            identityProviderId: "kc-sub-123",
+            brandId: Brand,
+            identityProviderId: "idp-sub-123",
             email: Email.Create("alice@example.com"),
             name: new PersonalName("Alice", "Tester"),
             dateOfBirth: dob,
             jurisdiction: new Jurisdiction("US", "NY"),
-            asOfUtc: Now);
+            asOfUtc: Now
+        );
     }
 }

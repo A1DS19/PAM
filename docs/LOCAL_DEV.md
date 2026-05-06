@@ -2,34 +2,56 @@
 
 ## Prerequisites
 
-- .NET 10 SDK (10.0.203 or later patch — pinned in `global.json`)
-- Docker Desktop
+- .NET 10 SDK (10.0.106 or later patch — pinned in `global.json` with
+  `latestFeature` rollForward)
+- Docker Desktop / Podman with Compose
 - `make`
+- `python3` (used by `infra/zitadel/bootstrap.sh`)
+- `curl`
 
-## First-time setup
+## First-time setup (mprocs — recommended)
 
 ```bash
-# 1. Bring up dependencies (Postgres, Keycloak, RabbitMQ, optionally Redis/Seq).
-#    Also runs the post-import script that declares the `player_id` attribute
-#    on the players-realm user profile (idempotent).
-make up
-
-# 2. Apply EF migrations.
-make migrate-update MODULE=Players
-
-# 3. Run the API.
-make run
-
-# 4. (Optional) Run the unit tests.
-make test
+mprocs                     # one command; two panes
 ```
 
-API at `http://localhost:5000`. Scalar UI at `/scalar/v1`. OpenAPI spec at
-`/openapi/v1.json`.
+`mprocs.yaml` runs two procs:
+
+- `services` — `docker compose up` (Postgres, ZITADEL, RabbitMQ, Redis, Seq) in foreground
+- `api` — sleeps 30s for compose to settle, then `make dev-api` (apply migrations + `dotnet watch`)
+
+The API self-bootstraps ZITADEL on startup. `ZitadelBootstrapService` (an `IHostedService`) waits for ZITADEL's OIDC discovery endpoint, reads the admin PAT that ZITADEL writes to `infra/zitadel/machinekey/zitadel-admin-sa.pat` on first init, then ensures the two Orgs (`betanything-eu`, `betanything-latam-stub`) and the `pam-player-api` Project exist. Idempotent — re-runs find by name on conflict.
+
+Switch panes with `Tab`; quit with `q` or `Ctrl-C`.
+
+## First-time setup (manual)
+
+```bash
+make up                              # docker compose up -d
+make migrate-update MODULE=Players   # apply EF migrations
+make dev-api                         # dotnet watch — bootstrap runs at startup
+make test                            # 22 unit tests, ~40ms (separate terminal)
+```
+
+| URL | What |
+|---|---|
+| `http://localhost:5000` | PAM API |
+| `http://localhost:5000/scalar/v1` | Scalar OpenAPI UI |
+| `http://localhost:8080/ui/console/` | ZITADEL admin console |
+| `http://localhost:3001/ui/v2/login/` | ZITADEL Login UI v2 (Next.js) |
+| `http://localhost:8090` | Seq logs (no auth in dev) |
+
+ZITADEL v4 splits its UI into two services: `zitadel` (Go, port 8080)
+serves the admin Console and the OIDC API; `zitadel-login` (Next.js,
+port 3001) serves the user login pages. The Console redirects to
+`localhost:3001/ui/v2/login/...` for authentication, which talks back
+to the API on the docker-internal network. Initial admin:
+`zitadel-admin@zitadel.localhost` / `Password1!`.
 
 ## Smoke test
 
 ```bash
+# Default brand (betanything-eu) — no header needed.
 curl -i -X POST http://localhost:5000/v1/auth/register \
   -H "Content-Type: application/json" \
   -d '{
@@ -41,6 +63,12 @@ curl -i -X POST http://localhost:5000/v1/auth/register \
     "countryCode": "US"
   }'
 # → 201 Created, Location: /v1/players/<player-id>
+
+# Explicit brand via X-Brand header (provisioned LATAM stub Org).
+curl -i -X POST http://localhost:5000/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -H "X-Brand: betanything-latam-stub" \
+  -d '{ ... }'
 ```
 
 ## Service ports
@@ -48,8 +76,9 @@ curl -i -X POST http://localhost:5000/v1/auth/register \
 | Service | Host port | Notes |
 |---|---|---|
 | Postgres (PAM) | 5432 | user: `pam`, db: `pam` |
-| Postgres (Keycloak) | 5433 | user: `keycloak`, db: `keycloak` |
-| Keycloak | 8080 | admin: `admin/admin`; realm import on startup |
+| Postgres (ZITADEL) | 5433 | user: `postgres`, db: `zitadel` |
+| ZITADEL API + Console | 8080 | OIDC issuer; insecure dev mode |
+| ZITADEL Login UI v2 | 3001 | Next.js login UI, talks to API internally |
 | RabbitMQ | 5672 (amqp), 15672 (UI) | user: `pam` |
 | Redis | 6379 | password: `redis_dev_password` |
 | Seq | 5341 (ingest), 8090 (UI) | optional log viewer |
@@ -81,21 +110,17 @@ A `IDesignTimeDbContextFactory<PlayersDbContext>` lives in
 startup project. The connection string can be overridden via the
 `PAM_CONNECTION` env var (defaults to the local compose).
 
-## Running multiple things at once
+## Resetting ZITADEL
 
-For HTTP + DB + Keycloak:
-
-```bash
-make up           # one-time per session
-make run          # `dotnet watch` — hot reload on .cs changes
-```
-
-To stop everything:
+Wipe the ZITADEL eventstore + machinekey and bring it back up clean (does
+not touch `pam-postgres`):
 
 ```bash
-make down         # stops compose services
-# Ctrl-C the `make run` terminal
+make zitadel-reset
 ```
+
+The next API start will re-create Orgs and Project against the fresh
+instance.
 
 ## Adding a feature
 
@@ -126,28 +151,22 @@ discovers endpoints via the `DependencyContextAssemblyCatalog` registered in
 | Per-module aggregates, features, infra | `src/Modules/<Module>/Pam.<Module>/` |
 | Public integration events / read-model interfaces | `src/Modules/<Module>/Pam.<Module>.Contracts/` |
 | API host, DI wiring, auth, healthchecks, OpenAPI | `src/Bootstrapper/Pam.Api/` |
-| Keycloak realm import + post-import setup | `infra/keycloak/realms/`, `infra/keycloak/setup/` |
+| ZITADEL bootstrap (orgs + project + PAT load) | `Pam.Players/Infrastructure/Zitadel/ZitadelBootstrapService.cs` |
 
 ## Secrets
 
-Local dev: `appsettings.json` and `appsettings.Development.json` carry
-working values for Keycloak, Postgres, Redis, RabbitMQ. Nothing here is
-production-grade — credentials are dev defaults.
+Local dev: `appsettings.json` carries non-secret defaults. The ZITADEL
+admin PAT is read from a file path (`Zitadel:AdminPatFile`, default
+`infra/zitadel/machinekey/zitadel-admin-sa.pat`) by the bootstrap
+service at startup — ZITADEL writes that file on first init via the
+`ZITADEL_FIRSTINSTANCE_PATPATH` setting in `docker-compose.yml`.
 
-Override locally without committing: either `dotnet user-secrets` (per
-project) or environment variables (ASP.NET layers env vars over
-appsettings using `__` as the nesting separator):
-
-```bash
-export ConnectionStrings__Pam="Host=localhost;Database=pam;Username=pam;Password=<your-pw>"
-export Keycloak__AdminPassword="<your-pw>"
-make run
-```
-
-Production: secrets arrive as env vars from whatever orchestrator runs the
-API (systemd unit, k3s Secret, Swarm secret). A dedicated secret store
-(HashiCorp Vault, SOPS, k3s External Secrets, etc.) is open — see
-`ROADMAP.md`.
+Production: secrets arrive as env vars from whatever orchestrator runs
+the API (systemd unit, k3s Secret, Swarm secret). The PAT-on-disk model
+is dev-only; in production ZITADEL credentials would be issued via a
+machine user provisioned by IaC and stored in the secret store. A
+dedicated store (HashiCorp Vault, SOPS, k3s External Secrets, etc.) is
+open — see `ROADMAP.md`.
 
 ## Scalar / OpenAPI
 

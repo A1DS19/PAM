@@ -6,23 +6,17 @@ public readonly record struct IdentityUserId(string Value)
 }
 
 public sealed record CreateIdentityUser(
+    string BrandId,
     string Email,
     string FirstName,
     string LastName,
     string Password,
-    bool RequireEmailVerify,
-    IReadOnlyDictionary<string, string>? Attributes = null
+    bool RequireEmailVerify
 );
 
 public interface IIdentityProvider
 {
     Task<IdentityUserId> CreateUserAsync(CreateIdentityUser input, CancellationToken ct);
-
-    Task SetUserAttributesAsync(
-        IdentityUserId id,
-        IDictionary<string, string> attributes,
-        CancellationToken ct
-    );
 
     Task SendVerifyEmailAsync(IdentityUserId id, CancellationToken ct);
 

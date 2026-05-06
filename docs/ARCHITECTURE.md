@@ -36,38 +36,59 @@ the parent `Pam` namespace's `Player` sub-namespace to shadow the type during
 name resolution. Naming the assembly `Pam.Players` removes the collision. The
 inner bounded-context folder (`Players/`) stays for organization.
 
-## Keycloak owns credentials; PAM owns the canonical player
+## ZITADEL owns credentials; PAM owns the canonical player
 
-Keycloak is the credential and session store. The Player aggregate in
-`Pam.Players` is the regulatory and business-truth record.
+ZITADEL is the credential, session, and tenant-boundary store. The Player
+aggregate in `Pam.Players` is the regulatory and business-truth record.
 
-- Player has an `IdentityProviderId` referencing the Keycloak `sub`. That is
+- Player has an `IdentityProviderId` referencing the ZITADEL user id. That is
   the only foreign key to the IDP.
-- Player owns: status (`Pending`/`Active`/`Suspended`/`Closed`), jurisdiction,
-  KYC state (later), wallet IDs (later), audit columns. Nothing regulatory or
-  business-critical lives in Keycloak attributes.
-- Keycloak owns: password hash, MFA factors, session list, brute-force
+- Player owns: `BrandId`, status (`Pending`/`Active`/`Suspended`/`Closed`),
+  jurisdiction, KYC state (later), wallet IDs (later), audit columns. Nothing
+  regulatory or business-critical lives in ZITADEL.
+- ZITADEL owns: password hash, MFA factors, session list, brute-force
   counters, refresh tokens, password reset / email verification flows.
 
-We deliberately do not use Keycloak as a user database. The vendor will
-change one day.
+We deliberately do not use ZITADEL as a user database. The
+`IIdentityProvider` interface in `Pam.Players` is the swap seam: a future
+move to a different IDP is "implement the same interface against a different
+backend."
 
 The bidirectional link is set up at registration: the Player aggregate gets
-`IdentityProviderId = <Keycloak sub>`, and the Keycloak user gets a
-`player_id` custom attribute. The `player_id` is mapped into access tokens via
-a protocol mapper on the `pam.player` client scope, so authenticated requests
-arrive carrying both the Keycloak `sub` and the PAM `player_id`.
+`IdentityProviderId = <ZITADEL user id>`. The IDP `sub` claim on incoming
+JWTs is the same value, so PAM's runtime mapping is a single-column lookup
+on the `players` table. The `player_id` is **not** stuffed into the JWT — we
+keep tokens lean and resolve PAM ids server-side.
 
-## Two realms, never one
+## Brand = ZITADEL Org
 
-We will run a `players` realm and (when admin endpoints land) an `operators`
-realm. They have different password policies, MFA requirements, session
-lifetimes, themes, and federation needs. Trying to do this in one realm with
-role flags is a known anti-pattern.
+Multi-brand is a first-class concern: betanything.eu plus the planned LATAM
+and Asia expansions all share this PAM. Each brand maps to a ZITADEL Org.
 
-`Pam.Api` validates tokens from both realms via separate `JwtBearer` schemes
-(`"players"` and `"operators"`), with authorization policies selecting the
-scheme per endpoint group.
+- A `Player` belongs to exactly one `BrandId`. The same human registering on
+  two brands is two separate `Player` rows — a per-brand record, never a
+  cross-brand "Subject" object. (If a regulator later demands cross-brand
+  linking — UK GamStop-style central self-exclusion — that's a separate
+  optional `Subject` concept layered on top.)
+- ZITADEL's Org per Brand maps cleanly: a registration call sets the
+  `x-zitadel-orgid` header to the brand's Org id and the user lands inside
+  the right tenant boundary.
+- Email uniqueness is per-brand (composite unique index on
+  `(brand_id, email)`).
+
+Brand context for an incoming registration comes from the `X-Brand` header
+(default `betanything-eu`); a runtime `IBrandRegistry` resolves brand id →
+ZITADEL Org id. Once authenticated, the brand for a request can be derived
+from the player record itself — JWT brand-stuffing is intentionally avoided.
+
+## Operator audience, when it lands
+
+Back-office (operator) auth is deferred. When it arrives, the natural
+ZITADEL shape is a separate Project + audience under a dedicated Org for
+operators (or a service-account project, depending on the back-office
+team's auth shape). `Pam.Api` adds a second `JwtBearer` scheme
+(`"operators"`) at that point, and authorization policies pick the scheme
+per endpoint group.
 
 ## Lean integration events, no PII
 
@@ -111,12 +132,13 @@ and `IUserContext`.
 
 `IUserContext.Current` returns a typed `Actor(ActorType, Id)` — never null,
 defaulting to `Actor.System` for background work and `Actor.Anonymous` for
-unauthenticated requests. `HttpUserContext` maps the `player_id` JWT claim
-to `ActorType.Player`; an authenticated request without `player_id` is
-treated as `ActorType.Operator` (placeholder until the operators realm
-lands). This is the regulator-checkable discriminator: a `Player` self-
-suspending vs an `Operator` suspending them are distinguishable in the
-audit columns without parsing.
+unauthenticated requests. `HttpUserContext` maps the JWT `sub` claim to `ActorType.Player` for any
+request authenticated through the players audience. An additional
+`"operators"` audience is added later for back-office traffic; at that
+point `HttpUserContext` selects `ActorType.Operator` based on the audience
+the token was validated against. This is the regulator-checkable
+discriminator: a `Player` self-suspending vs an `Operator` suspending them
+are distinguishable in the audit columns without parsing.
 
 This is application audit logging, not regulatory audit logging. Regulatory
 audit (immutable, cryptographically chained) is a separate `Audit` module
@@ -160,12 +182,11 @@ Two-layer model:
 
 1. **Non-secret config** (URLs, log levels, feature flags) lives in
    `appsettings.{env}.json`, committed.
-2. **Secrets** (DB connection strings, Keycloak admin credentials, RabbitMQ
+2. **Secrets** (DB connection strings, ZITADEL admin PAT, RabbitMQ
    passwords, JWT signing keys, payment-provider HMACs) arrive as
    environment variables from the host. ASP.NET's default configuration
    precedence reads env vars over `appsettings.{env}.json` and treats `__`
-   as the nesting separator (`Keycloak__AdminPassword` →
-   `Keycloak:AdminPassword`).
+   as the nesting separator (`Zitadel__AdminPat` → `Zitadel:AdminPat`).
 
 In production those env vars are injected by whatever orchestrator runs
 the API — systemd unit, k3s Secret, Swarm secret. The orchestrator-managed

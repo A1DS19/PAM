@@ -1,4 +1,5 @@
 using FluentValidation;
+using Pam.Players.Players.Brands;
 using Pam.Players.Players.Exceptions;
 using Pam.Players.Players.Models;
 using Pam.Shared.Time;
@@ -7,8 +8,15 @@ namespace Pam.Players.Players.Features.Register;
 
 public sealed class RegisterPlayerValidator : AbstractValidator<RegisterPlayer>
 {
-    public RegisterPlayerValidator(IClock clock)
+    public RegisterPlayerValidator(IClock clock, IBrandRegistry brands)
     {
+        RuleFor(x => x.BrandId)
+            .NotEmpty()
+            .WithErrorCode(PlayerErrors.BrandRequired)
+            .Must(brands.IsRegistered)
+            .WithErrorCode(PlayerErrors.BrandUnknown)
+            .WithMessage(x => $"Brand '{x.BrandId}' is not registered.");
+
         RuleFor(x => x.Email)
             .NotEmpty()
             .WithErrorCode(PlayerErrors.EmailRequired)

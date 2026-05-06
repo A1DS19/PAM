@@ -1,4 +1,4 @@
-.PHONY: help up down logs ps build restore test run clean migrate-add migrate-update migrate-remove migrate-status
+.PHONY: help up down logs ps build restore test run dev-api clean migrate-add migrate-update migrate-remove migrate-status zitadel-reset
 
 DC := docker compose
 SRC_DIR := src
@@ -8,14 +8,16 @@ DBCONTEXT_OF_MODULE = $(MODULE)DbContext
 
 help:
 	@echo "Available commands:"
-	@echo "  make up                                   - Start docker-compose dependencies"
+	@echo "  make up                                   - Start docker-compose dependencies (Pam.Api bootstraps ZITADEL on its own)"
 	@echo "  make down                                 - Stop docker-compose"
 	@echo "  make logs SERVICE=postgres                - Tail compose logs for a service"
 	@echo "  make ps                                   - List compose services"
+	@echo "  make zitadel-reset                        - Wipe ZITADEL state and bring it back up (does not touch pam-postgres)"
 	@echo "  make restore                              - dotnet restore"
 	@echo "  make build                                - dotnet build"
 	@echo "  make test                                 - dotnet test"
 	@echo "  make run                                  - Run Pam.Api with hot reload"
+	@echo "  make dev-api                              - Apply migrations, then watch (used by mprocs)"
 	@echo "  make clean                                - dotnet clean + remove bin/obj"
 	@echo "  make migrate-add MODULE=Players NAME=X     - Add an EF migration"
 	@echo "  make migrate-update MODULE=Players         - Apply migrations"
@@ -23,10 +25,8 @@ help:
 	@echo "  make migrate-status MODULE=Players         - List migrations"
 
 up:
+	@mkdir -p infra/zitadel/machinekey && chmod 777 infra/zitadel/machinekey
 	$(DC) up -d
-	@echo "Waiting for Keycloak to be ready..."
-	@until curl -sf http://localhost:8080/realms/master >/dev/null 2>&1; do sleep 2; done
-	@./infra/keycloak/setup/declare-player-id.sh
 
 down:
 	$(DC) down
@@ -36,6 +36,17 @@ logs:
 
 ps:
 	$(DC) ps
+
+zitadel-reset:
+	@echo "Stopping ZITADEL services..."
+	@$(DC) rm -sf zitadel zitadel-postgres
+	@echo "Removing ZITADEL eventstore volume + machinekey bind dir..."
+	@docker volume rm -f pam_pam-zitadel-postgres
+	@rm -rf infra/zitadel/machinekey
+	@mkdir -p infra/zitadel/machinekey && chmod 777 infra/zitadel/machinekey
+	@echo "Bringing ZITADEL back up..."
+	@$(DC) up -d zitadel-postgres zitadel
+	@echo "Done. The next API start will populate Org IDs."
 
 restore:
 	@dotnet restore
@@ -47,6 +58,10 @@ test:
 	@dotnet test
 
 run:
+	@dotnet watch --project $(API_PROJ)
+
+dev-api:
+	@$(MAKE) migrate-update MODULE=Players
 	@dotnet watch --project $(API_PROJ)
 
 clean:

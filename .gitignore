@@ -42,7 +42,10 @@ appsettings.*.Local.json
 *.pfx
 *.cer
 .env
-.env.local
+.env.*
+!.env.example
+infra/zitadel/machinekey/
 
 # Misc
 *.iml
+mprocs.log

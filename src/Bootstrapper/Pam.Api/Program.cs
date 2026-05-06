@@ -48,10 +48,12 @@ builder.Services.AddOpenApi();
 builder.Services.AddExceptionHandler<CustomExceptionHandler>();
 builder.Services.AddProblemDetails();
 
-var kcBase =
-    builder.Configuration["Keycloak:AuthServerUrl"]?.TrimEnd('/')
-    ?? throw new InvalidOperationException("Keycloak:AuthServerUrl is not configured");
-var playersRealm = builder.Configuration["Keycloak:PlayersRealm"] ?? "players";
+var zitadelAuthority =
+    builder.Configuration["Zitadel:Authority"]?.TrimEnd('/')
+    ?? throw new InvalidOperationException("Zitadel:Authority is not configured");
+var zitadelAudience =
+    builder.Configuration["Zitadel:Audience"]
+    ?? throw new InvalidOperationException("Zitadel:Audience is not configured");
 
 builder
     .Services.AddAuthentication()
@@ -59,8 +61,8 @@ builder
         "players",
         o =>
         {
-            o.Authority = $"{kcBase}/realms/{playersRealm}";
-            o.Audience = "pam-player-api";
+            o.Authority = zitadelAuthority;
+            o.Audience = zitadelAudience;
             o.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
         }
     );
@@ -95,11 +97,12 @@ builder.Services.AddRateLimiter(o =>
     {
         // Prefer authenticated identity; fall back to forwarded client IP.
         // UseForwardedHeaders runs before this, so RemoteIpAddress reflects
-        // X-Forwarded-For when configured.
-        var playerId = ctx.User.FindFirst("player_id")?.Value;
-        if (!string.IsNullOrEmpty(playerId))
+        // X-Forwarded-For when configured. The IDP-issued `sub` is unique
+        // per user across brands.
+        var sub = ctx.User.FindFirst("sub")?.Value;
+        if (!string.IsNullOrEmpty(sub))
         {
-            return $"player:{playerId}";
+            return $"sub:{sub}";
         }
 
         var ip = ctx.Connection.RemoteIpAddress;
@@ -145,8 +148,8 @@ builder.Services.AddRateLimiter(o =>
 
     o.OnRejected = async (context, cancellationToken) =>
     {
-        context.HttpContext.RequestServices
-            .GetRequiredService<ILoggerFactory>()
+        context
+            .HttpContext.RequestServices.GetRequiredService<ILoggerFactory>()
             .CreateLogger("RateLimiter")
             .LogWarning(
                 "Rate limit exceeded: Path={Path} Method={Method} RemoteIp={RemoteIp}",
@@ -157,8 +160,9 @@ builder.Services.AddRateLimiter(o =>
 
         if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
         {
-            context.HttpContext.Response.Headers.RetryAfter =
-                ((int)retryAfter.TotalSeconds).ToString(System.Globalization.CultureInfo.InvariantCulture);
+            context.HttpContext.Response.Headers.RetryAfter = (
+                (int)retryAfter.TotalSeconds
+            ).ToString(System.Globalization.CultureInfo.InvariantCulture);
         }
 
         context.HttpContext.Response.StatusCode = StatusCodes.Status429TooManyRequests;

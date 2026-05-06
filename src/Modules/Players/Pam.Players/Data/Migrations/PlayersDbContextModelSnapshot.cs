@@ -29,6 +29,12 @@ namespace Pam.Players.Data.Migrations
                         .HasColumnType("uuid")
                         .HasColumnName("id");
 
+                    b.Property<string>("BrandId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("brand_id");
+
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
                         .HasColumnName("created_at");
@@ -77,6 +83,8 @@ namespace Pam.Players.Data.Migrations
 
                     b.HasKey("Id");
 
+                    b.HasIndex("BrandId");
+
                     b.HasIndex("IdentityProviderId")
                         .IsUnique();
 
@@ -114,9 +122,6 @@ namespace Pam.Players.Data.Migrations
                                 .HasColumnName("email");
 
                             b1.HasKey("PlayerId");
-
-                            b1.HasIndex("Value")
-                                .IsUnique();
 
                             b1.ToTable("players", "player");
 

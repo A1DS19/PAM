@@ -13,6 +13,8 @@ public sealed class Player : Aggregate<PlayerId>
 
     private Player() { }
 
+    public string BrandId { get; private set; } = default!;
+
     public string IdentityProviderId { get; private set; } = default!;
 
     public Email Email { get; private set; } = default!;
@@ -29,6 +31,7 @@ public sealed class Player : Aggregate<PlayerId>
 
     public static Player Register(
         PlayerId id,
+        string brandId,
         string identityProviderId,
         Email email,
         PersonalName name,
@@ -49,6 +52,7 @@ public sealed class Player : Aggregate<PlayerId>
         var player = new Player
         {
             Id = id,
+            BrandId = brandId,
             IdentityProviderId = identityProviderId,
             Email = email,
             Name = name,
@@ -63,6 +67,7 @@ public sealed class Player : Aggregate<PlayerId>
                 EventId: PamIds.New(),
                 OccurredAt: asOfUtc,
                 PlayerId: id,
+                BrandId: brandId,
                 IdentityProviderId: identityProviderId,
                 Jurisdiction: jurisdiction.ToString()
             )

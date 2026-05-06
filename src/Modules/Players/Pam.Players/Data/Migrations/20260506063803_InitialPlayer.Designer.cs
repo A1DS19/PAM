@@ -12,8 +12,8 @@ using Pam.Players.Data;
 namespace Pam.Players.Data.Migrations
 {
     [DbContext(typeof(PlayersDbContext))]
-    [Migration("20260506005329_TypedActorAuditColumns")]
-    partial class TypedActorAuditColumns
+    [Migration("20260506063803_InitialPlayer")]
+    partial class InitialPlayer
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -31,6 +31,12 @@ namespace Pam.Players.Data.Migrations
                     b.Property<Guid>("Id")
                         .HasColumnType("uuid")
                         .HasColumnName("id");
+
+                    b.Property<string>("BrandId")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)")
+                        .HasColumnName("brand_id");
 
                     b.Property<DateTimeOffset>("CreatedAt")
                         .HasColumnType("timestamp with time zone")
@@ -72,11 +78,15 @@ namespace Pam.Players.Data.Migrations
                         .HasColumnType("character varying(16)")
                         .HasColumnName("last_modified_by_type");
 
-                    b.Property<int>("Status")
-                        .HasColumnType("integer")
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)")
                         .HasColumnName("status");
 
                     b.HasKey("Id");
+
+                    b.HasIndex("BrandId");
 
                     b.HasIndex("IdentityProviderId")
                         .IsUnique();
@@ -115,9 +125,6 @@ namespace Pam.Players.Data.Migrations
                                 .HasColumnName("email");
 
                             b1.HasKey("PlayerId");
-
-                            b1.HasIndex("Value")
-                                .IsUnique();
 
                             b1.ToTable("players", "player");
 

@@ -12,4 +12,6 @@ public static class PlayerErrors
     public const string JurisdictionNotAllowed = "pam.player.jurisdiction_not_allowed";
     public const string FirstNameRequired = "pam.player.first_name_required";
     public const string LastNameRequired = "pam.player.last_name_required";
+    public const string BrandRequired = "pam.player.brand_required";
+    public const string BrandUnknown = "pam.player.brand_unknown";
 }

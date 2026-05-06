@@ -18,45 +18,111 @@ services:
       timeout: 5s
       retries: 10
 
-  keycloak-postgres:
+  zitadel-postgres:
     image: postgres:17
-    container_name: pam-keycloak-postgres
+    container_name: pam-zitadel-postgres
     environment:
-      POSTGRES_USER: keycloak
-      POSTGRES_PASSWORD: keycloak_dev_password
-      POSTGRES_DB: keycloak
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: zitadel
     ports:
       - "5433:5432"
     volumes:
-      - pam-keycloak-postgres:/var/lib/postgresql/data
+      - pam-zitadel-postgres:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U keycloak -d keycloak"]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 5s
       timeout: 5s
       retries: 10
 
-  keycloak:
-    image: quay.io/keycloak/keycloak:26.0
-    container_name: pam-keycloak
-    command: ["start-dev", "--import-realm"]
+  zitadel:
+    image: ghcr.io/zitadel/zitadel:latest
+    container_name: pam-zitadel
+    restart: on-failure
+    command: 'start-from-init --masterkey "MasterkeyNeedsToHave32Characters" --tlsMode disabled'
     environment:
-      KC_BOOTSTRAP_ADMIN_USERNAME: admin
-      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
-      KC_DB: postgres
-      KC_DB_URL: jdbc:postgresql://keycloak-postgres:5432/keycloak
-      KC_DB_USERNAME: keycloak
-      KC_DB_PASSWORD: keycloak_dev_password
-      KC_HEALTH_ENABLED: "true"
-      KC_HTTP_ENABLED: "true"
-      KC_HOSTNAME_STRICT: "false"
-      KC_HOSTNAME_STRICT_HTTPS: "false"
+      ZITADEL_EXTERNALSECURE: "false"
+      ZITADEL_EXTERNALDOMAIN: localhost
+      ZITADEL_EXTERNALPORT: 8080
+      ZITADEL_PORT: 8080
+      ZITADEL_TLS_ENABLED: "false"
+      ZITADEL_DATABASE_POSTGRES_HOST: zitadel-postgres
+      ZITADEL_DATABASE_POSTGRES_PORT: 5432
+      ZITADEL_DATABASE_POSTGRES_DATABASE: zitadel
+      ZITADEL_DATABASE_POSTGRES_USER_USERNAME: zitadel
+      ZITADEL_DATABASE_POSTGRES_USER_PASSWORD: zitadel
+      ZITADEL_DATABASE_POSTGRES_USER_SSL_MODE: disable
+      ZITADEL_DATABASE_POSTGRES_ADMIN_USERNAME: postgres
+      ZITADEL_DATABASE_POSTGRES_ADMIN_PASSWORD: postgres
+      ZITADEL_DATABASE_POSTGRES_ADMIN_SSL_MODE: disable
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_USERNAME: zitadel-admin
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORD: Password1!
+      ZITADEL_FIRSTINSTANCE_ORG_HUMAN_PASSWORDCHANGEREQUIRED: "false"
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_USERNAME: zitadel-admin-sa
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_NAME: Bootstrap SA
+      ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_EXPIRATIONDATE: "2030-01-01T00:00:00Z"
+      ZITADEL_FIRSTINSTANCE_PATPATH: /machinekey/zitadel-admin-sa.pat
+      # Login v2 auto-bootstrap: a second machine user with the
+      # IAM_LOGIN_CLIENT role plus a PAT for the zitadel-login service to
+      # authenticate against this API.
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_MACHINE_USERNAME: login-client
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_MACHINE_NAME: Automatically Initialized IAM_LOGIN_CLIENT
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_PAT_EXPIRATIONDATE: "2030-01-01T00:00:00Z"
+      ZITADEL_FIRSTINSTANCE_LOGINCLIENTPATPATH: /machinekey/login-client.pat
+      # Wire the OIDC flow to redirect to the zitadel-login container's
+      # public URL (localhost:3001 from the host browser). Login v2 then
+      # talks back to this API on the internal docker network.
+      ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_REQUIRED: "true"
+      ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_BASEURI: http://localhost:3001/ui/v2/login/
+      ZITADEL_OIDC_DEFAULTLOGINURLV2: http://localhost:3001/ui/v2/login/login?authRequest=
+      ZITADEL_OIDC_DEFAULTLOGOUTURLV2: http://localhost:3001/ui/v2/login/logout?post_logout_redirect=
+      ZITADEL_SAML_DEFAULTLOGINURLV2: http://localhost:3001/ui/v2/login/login?samlRequest=
     ports:
       - "8080:8080"
     volumes:
-      - ./infra/keycloak/realms:/opt/keycloak/data/import:ro
+      # Bind mount (not a named volume) so the host has direct read access to
+      # the PAT file written on first init. The host dir is pre-created with
+      # world-writable perms by `make up` because Docker named volumes default
+      # to root-owned and the ZITADEL container process runs as a non-root
+      # user.
+      - ./infra/zitadel/machinekey:/machinekey
     depends_on:
-      keycloak-postgres:
+      zitadel-postgres:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/app/zitadel", "ready", "--config", "/zitadel.yaml"]
+      interval: 10s
+      timeout: 30s
+      retries: 5
+      start_period: 30s
+
+  zitadel-login:
+    image: ghcr.io/zitadel/zitadel-login:latest
+    container_name: pam-zitadel-login
+    restart: on-failure
+    environment:
+      ZITADEL_API_URL: http://zitadel:8080
+      NEXT_PUBLIC_BASE_PATH: /ui/v2/login
+      ZITADEL_SERVICE_USER_TOKEN_FILE: /machinekey/login-client.pat
+    ports:
+      - "3001:3000"
+    volumes:
+      # Shared with zitadel — login reads the login-client PAT that the
+      # ZITADEL FIRSTINSTANCE setup writes here.
+      - ./infra/zitadel/machinekey:/machinekey:ro
+    depends_on:
+      zitadel:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - /bin/sh
+        - -c
+        - node /app/healthcheck.mjs http://localhost:3000/ui/v2/login/healthy
+      interval: 10s
+      timeout: 30s
+      retries: 12
+      start_period: 20s
 
   redis:
     image: redis:7-alpine
@@ -94,6 +160,9 @@ services:
     container_name: pam-seq
     environment:
       ACCEPT_EULA: "Y"
+      # Dev only: skip the admin-password setup wizard. In any non-dev
+      # deployment, set SEQ_FIRSTRUN_ADMINPASSWORD instead.
+      SEQ_FIRSTRUN_NOAUTHENTICATION: "true"
     ports:
       - "5341:5341"
       - "8090:80"
@@ -102,7 +171,7 @@ services:
 
 volumes:
   pam-postgres:
-  pam-keycloak-postgres:
+  pam-zitadel-postgres:
   pam-redis:
   pam-rabbitmq:
   pam-seq:

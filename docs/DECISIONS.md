@@ -9,6 +9,135 @@ Rough ADR shape, kept terse. Order is reverse-chronological.
 
 ---
 
+## 15. ZITADEL bootstrap as `IHostedService`, not a shell script — 2026-05-06
+
+**Context.** Decision #12 introduced ZITADEL with a bash + curl + python3
+bootstrap script that read the admin PAT from a Docker volume, then made
+three API calls to ensure Orgs and Project. The script kept hitting
+portability issues: volume-path lookup differs per Docker setup, ZITADEL
+changed the org-search endpoint between versions, the chicken-and-egg
+PAT extraction needed permission fix-ups, and idempotency-check fallbacks
+were noisy on fresh runs.
+
+**Decision.** Remove `infra/zitadel/bootstrap.sh` and `.env.zitadel`.
+Bootstrap moves into `Pam.Api` as `ZitadelBootstrapService : IHostedService`,
+which:
+- waits for ZITADEL's OIDC discovery endpoint to come online (2-min cap),
+- reads the PAT from a configurable file path (default
+  `infra/zitadel/machinekey/zitadel-admin-sa.pat`, walks up to repo root
+  if invoked from a sub-dir),
+- ensures the configured Brand Orgs exist (POST /management/v1/orgs;
+  on 409, search via /v2/organizations/_search),
+- ensures the Project exists in the default brand's Org,
+- writes the resulting Org IDs and PAT into `ZitadelRuntimeState`
+  (singleton) which `BrandRegistry` and `ZitadelTokenHandler` read from.
+
+**Consequences.**
+- One language. No python3 / curl / bash shell-quoting fragility.
+- API fails fast at startup if ZITADEL isn't reachable — the same
+  property we want for any IDP-dependent service.
+- mprocs goes from three procs (services / bootstrap / api) to two
+  (services / api), matching the peer pro-cr-billing pattern.
+- `BrandRegistryOptions.Map` collapses to `BrandRegistryOptions.BrandIds`
+  (a list) — Org IDs are runtime-resolved, not config-supplied.
+- `ZitadelOptions.AdminPat` becomes `ZitadelOptions.AdminPatFile`.
+
+---
+
+## 14. Per-brand Player records; defer cross-brand `Subject` — 2026-05-06
+
+**Context.** With multi-brand confirmed, the question is whether a single
+human registering on Brand A and Brand B should be one PAM record or two.
+The legacy production system uses pattern (a) — one row regardless of
+brand — which conflates a person with an account: shared wallet across
+brands (illegal in many jurisdictions), one brand's compliance officer
+sees other brands' data, conflicting per-jurisdiction RG limits on a
+single row.
+
+**Decision.** Each `(person × brand)` is its own `Player` row. Email
+uniqueness is per-brand (composite unique index on `(brand_id, email)`).
+The legacy pattern is **not** carried forward. A future optional
+`Subject`/`Person` concept can link `Player`s across brands when a
+specific regulatory requirement arrives (UK GamStop-style central
+self-exclusion, FATF travel-rule recognition); until then, "same human
+re-verifies KYC on each brand" is the accepted cost.
+
+**Consequences.**
+- Wallet, Limits, Bonus, KYC are per-Player by construction.
+- Cross-brand fraud detection requires a future `Subject` layer; deferred
+  until a real regulator asks.
+- The legacy data migration story is "split, not preserve": each (person,
+  brand) pair in the legacy `tbCustomer` becomes a separate `Player` row,
+  with a stub `Subject` linking them only if mandated.
+
+---
+
+## 13. Brand is first-class; one ZITADEL Org per Brand — 2026-05-06
+
+**Context.** betanything.eu is one company today, planning expansion to
+LATAM and Asia with crypto. That is multi-brand (multiple consumer-facing
+sites under one operator) and multi-jurisdiction. Adding a `BrandId` to
+every aggregate after KYC, Wallet, Limits, Bonus all ship is much more
+expensive than adding it before module #2.
+
+**Decision.** A `Brand` concept is first-class from day one. Every
+aggregate carries `BrandId`. ZITADEL Org per Brand: registration sets
+`x-zitadel-orgid` on Management API calls; the `IIdentityProvider` impl
+resolves Brand → Org via an injected `IBrandRegistry`. Anonymous
+registration takes brand context from the `X-Brand` header (default
+`betanything-eu`); authenticated requests will derive brand from the
+player record itself. Email uniqueness is per-brand
+(`(brand_id, email)` composite unique index).
+
+The full `Pam.Operators` module (Brand + Jurisdiction policy registry,
+admin endpoints) is deferred to before module #2. Today the registry is
+a hardcoded `IBrandRegistry` reading from `appsettings:Brands:Map`,
+populated by the bootstrap script's `.env.zitadel`.
+
+**Consequences.**
+- POC seeds two Orgs (`betanything-eu`, `betanything-latam-stub`) so the
+  multi-brand path is exercised, not assumed.
+- Ahead of jurisdictional rules: `Jurisdiction` stays a value object on
+  `Player` for now; a `Pam.Operators` jurisdiction policy module
+  (min age, KYC tier matrix, allowed currencies) lands when KYC does.
+- ZITADEL's tenant boundary aligns with the brand boundary by design;
+  no per-brand realm-import dance.
+
+---
+
+## 12. ZITADEL replaces Keycloak — 2026-05-06
+
+**Context.** Decision #4 deferred a ZITADEL spike to "the operators
+realm milestone." Multi-brand confirmation (decision #13) shifted that
+trigger forward — committing to a Brand model is the moment to question
+the IDP shape, because ZITADEL's Org/Project model maps naturally to
+Brand and Keycloak's realm-per-brand pattern multiplies operational
+pain (N realm imports, N admin clients, N token endpoints).
+
+**Decision.** Replace Keycloak end-to-end with ZITADEL. Brand → Org,
+single Project (`pam-player-api`) audience for the player API, machine
+PAT for Management API access. The `IIdentityProvider` seam is preserved;
+`KeycloakIdentityProvider` is replaced with `ZitadelIdentityProvider`.
+The `player_id` claim is dropped from JWTs entirely — the IDP `sub` is
+the foreign key on the Player aggregate, and PAM resolves PlayerId
+server-side via that lookup. Tokens stay lean.
+
+**Consequences.**
+- One Postgres-backed self-host service replaces the JVM-heavy Keycloak
+  + Keycloak-Postgres pair.
+- Bootstrap is API-driven (`infra/zitadel/bootstrap.sh`) using a PAT that
+  ZITADEL writes to a shared volume on first init. No realm-import +
+  user-profile-schema post-import dance.
+- `Keycloak.AuthServices.*` packages and `Testcontainers.Keycloak`
+  removed from the central catalog (they were forward-pinned but
+  unused).
+- `global.json` SDK pin relaxed from `10.0.203` → `10.0.106` with
+  `latestFeature` rollForward, so locally-installed SDKs >=10.0.106
+  satisfy the build without per-commit `global.json` swapping.
+- Supersedes decision #4.
+
+---
+
 ## 11. Infisical removed; env-var secrets model — 2026-05-05
 
 **Context.** A custom `InfisicalSecretsConfigurationProvider` had been

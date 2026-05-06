@@ -15,8 +15,9 @@ public sealed class PlayerRegisteredDomainHandler(ILogger<PlayerRegisteredDomain
     {
         var ev = notification.Event;
         logger.LogInformation(
-            "Player registered: PlayerId={PlayerId} IdentityProviderId={IdentityProviderId} Jurisdiction={Jurisdiction}",
+            "Player registered: PlayerId={PlayerId} BrandId={BrandId} IdentityProviderId={IdentityProviderId} Jurisdiction={Jurisdiction}",
             ev.PlayerId,
+            ev.BrandId,
             ev.IdentityProviderId,
             ev.Jurisdiction
         );

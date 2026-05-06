@@ -4,7 +4,8 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
 using Pam.Players.Data;
-using Pam.Players.Infrastructure.Keycloak;
+using Pam.Players.Infrastructure.Zitadel;
+using Pam.Players.Players.Brands;
 using Pam.Players.Players.Identity;
 using Pam.Shared.Data.Interceptors;
 
@@ -35,27 +36,33 @@ public static class PlayersModule
         );
 
         services
-            .AddOptions<KeycloakOptions>()
-            .Bind(configuration.GetSection(KeycloakOptions.SectionName))
+            .AddOptions<BrandRegistryOptions>()
+            .Bind(configuration.GetSection(BrandRegistryOptions.SectionName))
             .ValidateOnStart();
-
-        // Singleton — the handler caches the admin access token in memory
-        // and refreshes it under a SemaphoreSlim. Registered as transient
-        // it lost the cache on every request and hammered the token
-        // endpoint; the singleton lifetime is what makes the lock and the
-        // expiry check meaningful.
-        services.AddSingleton<AdminTokenHandler>();
-        services.AddHttpClient("keycloak-token");
+        services.AddSingleton<IBrandRegistry, BrandRegistry>();
 
         services
-            .AddHttpClient<IIdentityProvider, KeycloakIdentityProvider>(
+            .AddOptions<ZitadelOptions>()
+            .Bind(configuration.GetSection(ZitadelOptions.SectionName))
+            .ValidateOnStart();
+
+        services.AddSingleton<ZitadelRuntimeState>();
+        services.AddTransient<ZitadelTokenHandler>();
+
+        services.AddHttpClient("zitadel-bootstrap");
+        services.AddHttpClient("zitadel-readiness");
+
+        services
+            .AddHttpClient<IIdentityProvider, ZitadelIdentityProvider>(
                 (sp, http) =>
                 {
-                    var opts = sp.GetRequiredService<IOptions<KeycloakOptions>>().Value;
-                    http.BaseAddress = new Uri(opts.AuthServerUrl.TrimEnd('/') + "/");
+                    var opts = sp.GetRequiredService<IOptions<ZitadelOptions>>().Value;
+                    http.BaseAddress = new Uri(opts.ManagementApiBaseUrl.TrimEnd('/') + "/");
                 }
             )
-            .AddHttpMessageHandler<AdminTokenHandler>();
+            .AddHttpMessageHandler<ZitadelTokenHandler>();
+
+        services.AddHostedService<ZitadelBootstrapService>();
 
         services
             .AddHealthChecks()

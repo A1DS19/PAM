@@ -1,0 +1,5 @@
+procs:
+  services:
+    shell: docker compose up
+  api:
+    shell: sleep 30 && make dev-api
