@@ -62,6 +62,21 @@ services:
       ZITADEL_FIRSTINSTANCE_ORG_MACHINE_MACHINE_NAME: Bootstrap SA
       ZITADEL_FIRSTINSTANCE_ORG_MACHINE_PAT_EXPIRATIONDATE: "2030-01-01T00:00:00Z"
       ZITADEL_FIRSTINSTANCE_PATPATH: /machinekey/zitadel-admin-sa.pat
+      # Login v2 auto-bootstrap: a second machine user with the
+      # IAM_LOGIN_CLIENT role plus a PAT for the zitadel-login service to
+      # authenticate against this API.
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_MACHINE_USERNAME: login-client
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_MACHINE_NAME: Automatically Initialized IAM_LOGIN_CLIENT
+      ZITADEL_FIRSTINSTANCE_ORG_LOGINCLIENT_PAT_EXPIRATIONDATE: "2030-01-01T00:00:00Z"
+      ZITADEL_FIRSTINSTANCE_LOGINCLIENTPATPATH: /machinekey/login-client.pat
+      # Wire the OIDC flow to redirect to the zitadel-login container's
+      # public URL (localhost:3001 from the host browser). Login v2 then
+      # talks back to this API on the internal docker network.
+      ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_REQUIRED: "true"
+      ZITADEL_DEFAULTINSTANCE_FEATURES_LOGINV2_BASEURI: http://localhost:3001/ui/v2/login/
+      ZITADEL_OIDC_DEFAULTLOGINURLV2: http://localhost:3001/ui/v2/login/login?authRequest=
+      ZITADEL_OIDC_DEFAULTLOGOUTURLV2: http://localhost:3001/ui/v2/login/logout?post_logout_redirect=
+      ZITADEL_SAML_DEFAULTLOGINURLV2: http://localhost:3001/ui/v2/login/login?samlRequest=
     ports:
       - "8080:8080"
     volumes:
@@ -80,6 +95,34 @@ services:
       timeout: 30s
       retries: 5
       start_period: 30s
+
+  zitadel-login:
+    image: ghcr.io/zitadel/zitadel-login:latest
+    container_name: pam-zitadel-login
+    restart: on-failure
+    environment:
+      ZITADEL_API_URL: http://zitadel:8080
+      NEXT_PUBLIC_BASE_PATH: /ui/v2/login
+      ZITADEL_SERVICE_USER_TOKEN_FILE: /machinekey/login-client.pat
+    ports:
+      - "3001:3000"
+    volumes:
+      # Shared with zitadel — login reads the login-client PAT that the
+      # ZITADEL FIRSTINSTANCE setup writes here.
+      - ./infra/zitadel/machinekey:/machinekey:ro
+    depends_on:
+      zitadel:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - /bin/sh
+        - -c
+        - node /app/healthcheck.mjs http://localhost:3000/ui/v2/login/healthy
+      interval: 10s
+      timeout: 30s
+      retries: 12
+      start_period: 20s
 
   redis:
     image: redis:7-alpine

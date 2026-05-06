@@ -33,15 +33,20 @@ make dev-api                         # dotnet watch — bootstrap runs at startu
 make test                            # 22 unit tests, ~40ms (separate terminal)
 ```
 
-API at `http://localhost:5000`. Scalar UI at `/scalar/v1`. OpenAPI spec at
-`/openapi/v1.json`. ZITADEL admin console at
-`http://localhost:8080/ui/console/` (initial admin:
-`zitadel-admin@zitadel.localhost` / `Password1!`). Seq at
-`http://localhost:8090` (no auth in dev).
+| URL | What |
+|---|---|
+| `http://localhost:5000` | PAM API |
+| `http://localhost:5000/scalar/v1` | Scalar OpenAPI UI |
+| `http://localhost:8080/ui/console/` | ZITADEL admin console |
+| `http://localhost:3001/ui/v2/login/` | ZITADEL Login UI v2 (Next.js) |
+| `http://localhost:8090` | Seq logs (no auth in dev) |
 
-> The path `/ui/v2/login/` is the ZITADEL Login UI v2 — it only serves
-> content when reached as part of an OIDC redirect, not from a direct
-> `GET /`. Use `/ui/console/` for the admin UI.
+ZITADEL v4 splits its UI into two services: `zitadel` (Go, port 8080)
+serves the admin Console and the OIDC API; `zitadel-login` (Next.js,
+port 3001) serves the user login pages. The Console redirects to
+`localhost:3001/ui/v2/login/...` for authentication, which talks back
+to the API on the docker-internal network. Initial admin:
+`zitadel-admin@zitadel.localhost` / `Password1!`.
 
 ## Smoke test
 
@@ -72,7 +77,8 @@ curl -i -X POST http://localhost:5000/v1/auth/register \
 |---|---|---|
 | Postgres (PAM) | 5432 | user: `pam`, db: `pam` |
 | Postgres (ZITADEL) | 5433 | user: `postgres`, db: `zitadel` |
-| ZITADEL | 8080 | console + OIDC; insecure dev mode |
+| ZITADEL API + Console | 8080 | OIDC issuer; insecure dev mode |
+| ZITADEL Login UI v2 | 3001 | Next.js login UI, talks to API internally |
 | RabbitMQ | 5672 (amqp), 15672 (UI) | user: `pam` |
 | Redis | 6379 | password: `redis_dev_password` |
 | Seq | 5341 (ingest), 8090 (UI) | optional log viewer |
