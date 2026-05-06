@@ -9,7 +9,12 @@
     <AnalysisMode>All</AnalysisMode>
     <AnalysisLevel>latest</AnalysisLevel>
     <GenerateDocumentationFile>false</GenerateDocumentationFile>
-    <NoWarn>$(NoWarn);1591;CA1030;CA1031;CA1032;CA1040;CA1056;CA1062;CA1308;CA1515;CA1707;CA1716;CA1812;CA1848;CA1873;CA2007;MA0048;MA0051;S1075;S1144;S2139</NoWarn>
+    <!--
+      MA0099 fires on protobuf-generated enums whose first member has value 0
+      (e.g. TextQueryMethod.Equals = 0). We pass these explicitly; the analyzer
+      can't tell the difference.
+    -->
+    <NoWarn>$(NoWarn);1591;CA1030;CA1031;CA1032;CA1040;CA1056;CA1062;CA1308;CA1515;CA1707;CA1716;CA1812;CA1848;CA1873;CA2007;MA0048;MA0051;MA0099;S1075;S1144;S2139</NoWarn>
     <NuGetAuditLevel>high</NuGetAuditLevel>
   </PropertyGroup>
 

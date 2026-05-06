@@ -3,7 +3,8 @@ using Microsoft.EntityFrameworkCore.Design;
 
 namespace Pam.Players.Data;
 
-public sealed class PlayersDbContextDesignTimeFactory : IDesignTimeDbContextFactory<PlayersDbContext>
+public sealed class PlayersDbContextDesignTimeFactory
+    : IDesignTimeDbContextFactory<PlayersDbContext>
 {
     public PlayersDbContext CreateDbContext(string[] args)
     {

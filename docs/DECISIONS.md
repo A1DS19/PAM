@@ -26,11 +26,13 @@ which:
 - reads the PAT from a configurable file path (default
   `infra/zitadel/machinekey/zitadel-admin-sa.pat`, walks up to repo root
   if invoked from a sub-dir),
-- ensures the configured Brand Orgs exist (POST /management/v1/orgs;
-  on 409, search via /v2/organizations/_search),
+- ensures the configured Brand Orgs exist (gRPC `OrganizationService.AddOrganization`
+  via the smartive `Zitadel` SDK; on AlreadyExists falls back to `ListOrganizations`),
 - ensures the Project exists in the default brand's Org,
-- writes the resulting Org IDs and PAT into `ZitadelRuntimeState`
-  (singleton) which `BrandRegistry` and `ZitadelTokenHandler` read from.
+- writes the resulting Org IDs and an `ITokenProvider` (built from the PAT)
+  into `ZitadelRuntimeState` (singleton). `BrandRegistry` reads the org map;
+  `ZitadelClientFactory` reads the token provider to mint per-org gRPC
+  management clients on demand.
 
 **Consequences.**
 - One language. No python3 / curl / bash shell-quoting fragility.

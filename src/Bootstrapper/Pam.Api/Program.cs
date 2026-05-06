@@ -16,6 +16,12 @@ using Pam.Shared.Security;
 using Scalar.AspNetCore;
 using Serilog;
 
+// gRPC over plaintext HTTP/2 — required for the local ZITADEL container which
+// runs without TLS (ZITADEL_TLS_ENABLED=false in docker-compose). The switch
+// is harmless when the endpoint is HTTPS; production should still terminate
+// TLS in front of ZITADEL.
+AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Configuration precedence (highest first): environment variables,
@@ -46,7 +52,31 @@ builder.Services.AddPlayersModule(builder.Configuration);
 builder.Services.AddCarter(new DependencyContextAssemblyCatalog(moduleAssemblies));
 builder.Services.AddOpenApi();
 builder.Services.AddExceptionHandler<CustomExceptionHandler>();
-builder.Services.AddProblemDetails();
+
+// By default, Minimal APIs handle parameter-binding failures internally and
+// short-circuit to IProblemDetailsService — bypassing our IExceptionHandler.
+// Routing them through our handler keeps a single place that formats errors
+// AND avoids the framework's dev-only ProblemDetails extension that leaks
+// request headers + cookies in the response body.
+builder.Services.Configure<Microsoft.AspNetCore.Routing.RouteHandlerOptions>(o =>
+    o.ThrowOnBadRequest = true
+);
+
+builder.Services.AddProblemDetails(options =>
+{
+    options.CustomizeProblemDetails = ctx =>
+    {
+        // Defense-in-depth: any ProblemDetails the framework writes directly
+        // (404 from a missing route, 405, 415, etc.) gets the dev "exception"
+        // extension stripped so we never leak headers/cookies/stack traces.
+        ctx.ProblemDetails.Extensions.Remove("exception");
+        if (!ctx.ProblemDetails.Extensions.ContainsKey("traceId"))
+        {
+            ctx.ProblemDetails.Extensions["traceId"] =
+                System.Diagnostics.Activity.Current?.Id ?? ctx.HttpContext.TraceIdentifier;
+        }
+    };
+});
 
 var zitadelAuthority =
     builder.Configuration["Zitadel:Authority"]?.TrimEnd('/')

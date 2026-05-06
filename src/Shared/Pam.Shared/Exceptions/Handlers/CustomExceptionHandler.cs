@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using FluentValidation;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http;
@@ -31,6 +32,11 @@ public sealed class CustomExceptionHandler(ILogger<CustomExceptionHandler> logge
                 StatusCodes.Status401Unauthorized,
                 "Unauthorized",
                 exception.Message
+            ),
+            BadHttpRequestException bhre => MapBare(
+                bhre.StatusCode,
+                "Bad Request",
+                BuildBadRequestDetail(bhre)
             ),
             _ => MapInternal(),
         };
@@ -115,6 +121,20 @@ public sealed class CustomExceptionHandler(ILogger<CustomExceptionHandler> logge
                 Detail = detail,
             }
         );
+    }
+
+    // Minimal APIs wrap JSON parse failures in BadHttpRequestException whose
+    // own Message is the generic "Failed to read parameter …". The useful
+    // detail (which field, what format) lives in the inner JsonException.
+    private static string BuildBadRequestDetail(BadHttpRequestException bhre)
+    {
+        if (bhre.InnerException is JsonException je)
+        {
+            var path = string.IsNullOrEmpty(je.Path) ? null : je.Path;
+            var reason = je.InnerException?.Message ?? je.Message;
+            return path is null ? reason : $"{path}: {reason}";
+        }
+        return bhre.Message;
     }
 
     private static (int Status, ProblemDetails Problem) MapInternal()

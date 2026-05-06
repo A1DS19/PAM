@@ -1,102 +1,109 @@
-using System.Net;
-using System.Net.Http.Json;
-using System.Text.Json;
+using Grpc.Core;
 using Microsoft.Extensions.Logging;
 using Pam.Players.Players.Brands;
 using Pam.Players.Players.Exceptions;
 using Pam.Players.Players.Identity;
 using Pam.Shared.Exceptions;
+using Zitadel.Management.V1;
 
 namespace Pam.Players.Infrastructure.Zitadel;
 
 public sealed class ZitadelIdentityProvider(
-    HttpClient http,
+    ZitadelClientFactory clients,
     IBrandRegistry brands,
     ILogger<ZitadelIdentityProvider> logger
 ) : IIdentityProvider
 {
-    private const string OrgIdHeader = "x-zitadel-orgid";
-
     public async Task<IdentityUserId> CreateUserAsync(
         CreateIdentityUser input,
         CancellationToken ct
     )
     {
         var orgId = brands.GetOrgId(input.BrandId);
+        var mgmt = clients.ManagementClient(orgId);
 
-        var payload = new
+        var req = new ImportHumanUserRequest
         {
-            userName = input.Email,
-            profile = new
+            UserName = input.Email,
+            Profile = new ImportHumanUserRequest.Types.Profile
             {
-                firstName = input.FirstName,
-                lastName = input.LastName,
-                displayName = $"{input.FirstName} {input.LastName}".Trim(),
-                preferredLanguage = "en",
+                FirstName = input.FirstName,
+                LastName = input.LastName,
+                DisplayName = $"{input.FirstName} {input.LastName}".Trim(),
+                PreferredLanguage = "en",
             },
-            email = new { email = input.Email, isEmailVerified = !input.RequireEmailVerify },
-            initialPassword = input.Password,
+            Email = new ImportHumanUserRequest.Types.Email
+            {
+                Email_ = input.Email,
+                IsEmailVerified = !input.RequireEmailVerify,
+            },
+            Password = input.Password,
         };
 
-        using var req = new HttpRequestMessage(
-            HttpMethod.Post,
-            "management/v1/users/human/_import"
-        );
-        req.Headers.Add(OrgIdHeader, orgId);
-        req.Content = JsonContent.Create(payload);
-
-        using var resp = await http.SendAsync(req, ct);
-
-        if (resp.StatusCode == HttpStatusCode.Conflict)
+        try
+        {
+            var resp = await mgmt.ImportHumanUserAsync(req, cancellationToken: ct);
+            return new IdentityUserId(resp.UserId);
+        }
+        catch (RpcException ex) when (ex.StatusCode == StatusCode.AlreadyExists)
         {
             throw new AlreadyExistsException(
                 PlayerErrors.EmailAlreadyRegistered,
                 "An account with this email already exists."
             );
         }
-
-        if (!resp.IsSuccessStatusCode)
+        catch (RpcException ex)
         {
-            var body = await resp.Content.ReadAsStringAsync(ct);
-            logger.LogError("ZITADEL create user failed: {Status} {Body}", resp.StatusCode, body);
-            resp.EnsureSuccessStatusCode();
+            logger.LogError(
+                ex,
+                "ZITADEL ImportHumanUser failed: {Status} {Detail}",
+                ex.StatusCode,
+                ex.Status.Detail
+            );
+            throw;
         }
-
-        var doc = await resp.Content.ReadFromJsonAsync<JsonElement>(ct);
-        var userId =
-            doc.GetProperty("userId").GetString()
-            ?? throw new InvalidOperationException("ZITADEL did not return userId on create.");
-
-        return new IdentityUserId(userId);
     }
 
-    public async Task SendVerifyEmailAsync(IdentityUserId id, CancellationToken ct)
+    public async Task SendVerifyEmailAsync(string brandId, IdentityUserId id, CancellationToken ct)
     {
-        using var content = JsonContent.Create(new { });
-        using var resp = await http.PostAsync(
-            new Uri($"management/v1/users/{id.Value}/email/_resendverification", UriKind.Relative),
-            content,
-            ct
-        );
-        if (!resp.IsSuccessStatusCode)
+        // ImportHumanUser sets a password, so the user needs verify-email,
+        // not the initialization flow (which is for password-less imports).
+        // ZITADEL's management API is org-scoped — without the org header it
+        // returns NotFound for users that exist in a different org context.
+        var orgId = brands.GetOrgId(brandId);
+        var mgmt = clients.ManagementClient(orgId);
+        try
+        {
+            await mgmt.ResendHumanEmailVerificationAsync(
+                new ResendHumanEmailVerificationRequest { UserId = id.Value },
+                cancellationToken: ct
+            );
+        }
+        catch (RpcException ex)
         {
             logger.LogWarning(
-                "ZITADEL resend verify-email returned {Status} for user {UserId}",
-                resp.StatusCode,
+                ex,
+                "ZITADEL ResendHumanEmailVerification returned {Status} for user {UserId}",
+                ex.StatusCode,
                 id.Value
             );
         }
     }
 
-    public async Task DeleteUserAsync(IdentityUserId id, CancellationToken ct)
+    public async Task DeleteUserAsync(string brandId, IdentityUserId id, CancellationToken ct)
     {
-        using var resp = await http.DeleteAsync(
-            new Uri($"management/v1/users/{id.Value}", UriKind.Relative),
-            ct
-        );
-        if (resp.StatusCode != HttpStatusCode.NotFound)
+        var orgId = brands.GetOrgId(brandId);
+        var mgmt = clients.ManagementClient(orgId);
+        try
         {
-            resp.EnsureSuccessStatusCode();
+            await mgmt.RemoveUserAsync(
+                new RemoveUserRequest { Id = id.Value },
+                cancellationToken: ct
+            );
+        }
+        catch (RpcException ex) when (ex.StatusCode == StatusCode.NotFound)
+        {
+            // Idempotent delete: user already gone.
         }
     }
 }

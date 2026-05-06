@@ -78,7 +78,7 @@ public sealed class RegisterPlayerHandler(
             );
             try
             {
-                await identity.DeleteUserAsync(idpId, cancellationToken);
+                await identity.DeleteUserAsync(cmd.BrandId, idpId, cancellationToken);
             }
             catch (Exception cleanupEx)
             {
@@ -95,7 +95,7 @@ public sealed class RegisterPlayerHandler(
         // delete the IDP user — that would orphan the saved row.
         try
         {
-            await identity.SendVerifyEmailAsync(idpId, cancellationToken);
+            await identity.SendVerifyEmailAsync(cmd.BrandId, idpId, cancellationToken);
         }
         catch (Exception emailEx)
         {

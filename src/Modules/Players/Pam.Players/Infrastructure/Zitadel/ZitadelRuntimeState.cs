@@ -1,13 +1,16 @@
+using Zitadel.Api;
+
 namespace Pam.Players.Infrastructure.Zitadel;
 
 // Singleton holder for values resolved at startup by ZitadelBootstrapService.
-// AdminPat is read from disk, Org IDs are looked up by name in ZITADEL, the
-// Project is ensured-or-created. ZitadelTokenHandler and BrandRegistry both
-// read from this. Mutated only inside ZitadelBootstrapService.StartAsync,
-// which runs before the host starts accepting requests.
+// TokenProvider is built from a PAT (or, later, JWT-profile service account),
+// Org IDs are looked up by name in ZITADEL, the Project is ensured-or-created.
+// ZitadelClientFactory and BrandRegistry both read from this. Mutated only
+// inside ZitadelBootstrapService.StartAsync, which runs before the host starts
+// accepting requests.
 public sealed class ZitadelRuntimeState
 {
-    public string AdminPat { get; set; } = "";
+    public ITokenProvider? TokenProvider { get; set; }
 
     public string ProjectId { get; set; } = "";
 

@@ -18,7 +18,7 @@ public interface IIdentityProvider
 {
     Task<IdentityUserId> CreateUserAsync(CreateIdentityUser input, CancellationToken ct);
 
-    Task SendVerifyEmailAsync(IdentityUserId id, CancellationToken ct);
+    Task SendVerifyEmailAsync(string brandId, IdentityUserId id, CancellationToken ct);
 
-    Task DeleteUserAsync(IdentityUserId id, CancellationToken ct);
+    Task DeleteUserAsync(string brandId, IdentityUserId id, CancellationToken ct);
 }

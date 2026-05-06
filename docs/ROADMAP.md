@@ -103,6 +103,32 @@ to a detail section further down for the *what* and *why deferred*.
   the common case but has a tiny window where both the DB save and the
   ZITADEL delete can fail.
 
+### IDP → PAM lifecycle sync (ZITADEL Actions webhook)
+- **What**: ZITADEL Actions v2 fires a webhook on `user.removed` /
+  `user.deactivated`; PAM exposes `POST /v1/webhooks/zitadel/user-removed`
+  which verifies an HMAC signature + replay window, looks up the player
+  by `IdentityProviderId`, and calls `Player.Close(reason: "idp-removed")`.
+  Soft-close only (status → `Closed`), never `DELETE` — regulatory
+  retention requires keeping player history for years after account close.
+  Hard erasure is a separate GDPR-driven anonymization flow.
+- **Why we don't auto-cascade today**: PAM is the canonical record for
+  regulatory data; admin actions in the ZITADEL console are out-of-band
+  and shouldn't silently mutate PAM state. The intended prod model is
+  **wrap-only**: admins use PAM's admin UI, which calls ZITADEL under the
+  covers (single source of truth, no sync problem to solve). The webhook
+  is belt-and-suspenders for drift, not the primary mechanism.
+- **Trigger**: before the back-office admin UI ships, or sooner if
+  someone wants to use the ZITADEL console as a player-ops tool in dev.
+- **Local dev wiring**: `make zitadel-actions-setup` target idempotently
+  creates the Action target (`http://host.docker.internal:5000/v1/webhooks/zitadel/user-removed`)
+  and execution binding via the Admin API; HMAC secret lives in
+  `Zitadel:WebhookSecret`. Action v2 is GA in ZITADEL v2.50+ — `latest`
+  has it.
+- **Rough scope**: ~6 files —  `Player.Close()` aggregate method +
+  `PlayerClosedDomainEvent`, the webhook endpoint with signature/timestamp
+  verification, the `ClosePlayerByIdpId` command + handler, an integration
+  event for downstream modules, and the `make` setup target.
+
 ### CorrelationId middleware
 - **What**: explicit `X-Correlation-Id` middleware that flows through
   MediatR + outbox + MassTransit headers.

@@ -54,6 +54,16 @@ We deliberately do not use ZITADEL as a user database. The
 move to a different IDP is "implement the same interface against a different
 backend."
 
+**Lifecycle changes don't auto-cascade from ZITADEL → PAM.** Deleting a
+user in the ZITADEL console does *not* close the PAM player; PAM owns the
+canonical record and regulatory retention rules require keeping closed
+accounts for years. The intended prod model is **wrap-only**: admins act
+through PAM's back-office UI which calls ZITADEL under the covers, so
+there's a single source of truth and no sync problem to solve. A
+ZITADEL-Actions webhook (option B in `ROADMAP.md`) is the planned
+belt-and-suspenders for drift; reconciliation jobs are the safety net
+behind that.
+
 The bidirectional link is set up at registration: the Player aggregate gets
 `IdentityProviderId = <ZITADEL user id>`. The IDP `sub` claim on incoming
 JWTs is the same value, so PAM's runtime mapping is a single-column lookup

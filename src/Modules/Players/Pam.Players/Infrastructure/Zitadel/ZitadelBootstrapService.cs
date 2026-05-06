@@ -1,23 +1,27 @@
-using System.Net;
-using System.Net.Http.Headers;
-using System.Net.Http.Json;
-using System.Text.Json;
+using Grpc.Core;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Pam.Players.Players.Brands;
+using Zitadel.Api;
+using Zitadel.Management.V1;
+using Zitadel.Org.V2;
+// V1 and V2 each ship a TextQueryMethod enum; alias to keep call sites
+// unambiguous. Org V2 search uses Object.V2; Project V1 search uses V1.
+using OrgTextQueryMethod = Zitadel.Object.V2.TextQueryMethod;
+using ProjectTextQueryMethod = Zitadel.V1.TextQueryMethod;
 
 namespace Pam.Players.Infrastructure.Zitadel;
 
 public sealed class ZitadelBootstrapService(
     IHttpClientFactory httpFactory,
+    ZitadelClientFactory clientFactory,
     ZitadelRuntimeState state,
     IOptions<ZitadelOptions> zitadelOpts,
     IOptions<BrandRegistryOptions> brandOpts,
     ILogger<ZitadelBootstrapService> logger
 ) : IHostedService
 {
-    private const string OrgIdHeader = "x-zitadel-orgid";
     private static readonly TimeSpan ReadinessTimeout = TimeSpan.FromMinutes(2);
 
     public async Task StartAsync(CancellationToken cancellationToken)
@@ -28,24 +32,22 @@ public sealed class ZitadelBootstrapService(
         await WaitForZitadelReadyAsync(z.Authority, cancellationToken);
 
         var patPath = ResolvePatFile(z.AdminPatFile);
-        state.AdminPat = (await File.ReadAllTextAsync(patPath, cancellationToken)).Trim();
-        if (string.IsNullOrEmpty(state.AdminPat))
+        var pat = (await File.ReadAllTextAsync(patPath, cancellationToken)).Trim();
+        if (string.IsNullOrEmpty(pat))
         {
-            throw new InvalidOperationException(
-                $"ZITADEL admin PAT file at '{patPath}' is empty."
-            );
+            throw new InvalidOperationException($"ZITADEL admin PAT file at '{patPath}' is empty.");
         }
 
-        using var http = httpFactory.CreateClient("zitadel-bootstrap");
-        http.BaseAddress = new Uri(z.ManagementApiBaseUrl.TrimEnd('/') + "/");
-        http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue(
-            "Bearer",
-            state.AdminPat
-        );
+        // The lib's StaticTokenProvider attaches the PAT as a Bearer header on
+        // every gRPC call via its internal DelegatingHandler. JWT-profile
+        // (ITokenProvider.ServiceAccount) is the prod path — swap by setting
+        // ZitadelOptions and constructing a different provider here.
+        state.TokenProvider = ITokenProvider.Static(pat);
 
+        var orgClient = clientFactory.OrganizationClient();
         foreach (var brandId in b.BrandIds)
         {
-            var orgId = await EnsureOrgAsync(http, brandId, cancellationToken);
+            var orgId = await EnsureOrgAsync(orgClient, brandId, cancellationToken);
             state.BrandOrgIds[brandId] = orgId;
             logger.LogInformation("Brand {BrandId} → ZITADEL Org {OrgId}", brandId, orgId);
         }
@@ -56,13 +58,13 @@ public sealed class ZitadelBootstrapService(
                 $"Default brand '{b.Default}' is not in Brands:BrandIds."
             );
         }
-        state.ProjectId = await EnsureProjectAsync(
-            http,
-            defaultOrg,
+        var mgmt = clientFactory.ManagementClient(defaultOrg);
+        state.ProjectId = await EnsureProjectAsync(mgmt, z.ProjectName, cancellationToken);
+        logger.LogInformation(
+            "ZITADEL Project '{Name}' → {ProjectId}",
             z.ProjectName,
-            cancellationToken
+            state.ProjectId
         );
-        logger.LogInformation("ZITADEL Project '{Name}' → {ProjectId}", z.ProjectName, state.ProjectId);
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
@@ -98,132 +100,83 @@ public sealed class ZitadelBootstrapService(
     }
 
     private static async Task<string> EnsureOrgAsync(
-        HttpClient http,
+        OrganizationService.OrganizationServiceClient client,
         string name,
         CancellationToken ct
     )
     {
-        using var createResp = await http.PostAsJsonAsync(
-            "management/v1/orgs",
-            new { name },
-            ct
-        );
-        if (createResp.IsSuccessStatusCode)
+        try
         {
-            return await ReadIdAsync(createResp, ct);
+            var resp = await client.AddOrganizationAsync(
+                new AddOrganizationRequest { Name = name },
+                cancellationToken: ct
+            );
+            return resp.OrganizationId;
         }
-        if (createResp.StatusCode != HttpStatusCode.Conflict)
+        catch (RpcException ex) when (ex.StatusCode == StatusCode.AlreadyExists)
         {
-            await ThrowFromAsync(createResp, $"create org '{name}'", ct);
+            // Fall through to search by name.
         }
 
-        // Already exists — search by name. Org search lives at /v2 in
-        // ZITADEL v4.x; create stays at /management/v1.
-        using var searchResp = await http.PostAsJsonAsync(
-            "v2/organizations/_search",
-            new
+        var search = new ListOrganizationsRequest();
+        search.Queries.Add(
+            new SearchQuery
             {
-                queries = new object[]
+                NameQuery = new OrganizationNameQuery
                 {
-                    new
-                    {
-                        nameQuery = new
-                        {
-                            name,
-                            method = "TEXT_QUERY_METHOD_EQUALS",
-                        },
-                    },
-                },
-            },
-            ct
-        );
-        searchResp.EnsureSuccessStatusCode();
-        return await ReadFirstResultIdAsync(searchResp, $"org '{name}'", ct);
-    }
-
-    private static async Task<string> EnsureProjectAsync(
-        HttpClient http,
-        string orgId,
-        string name,
-        CancellationToken ct
-    )
-    {
-        using var createReq = new HttpRequestMessage(HttpMethod.Post, "management/v1/projects");
-        createReq.Headers.Add(OrgIdHeader, orgId);
-        createReq.Content = JsonContent.Create(new { name });
-        using var createResp = await http.SendAsync(createReq, ct);
-        if (createResp.IsSuccessStatusCode)
-        {
-            return await ReadIdAsync(createResp, ct);
-        }
-        if (createResp.StatusCode != HttpStatusCode.Conflict)
-        {
-            await ThrowFromAsync(createResp, $"create project '{name}'", ct);
-        }
-
-        using var searchReq = new HttpRequestMessage(
-            HttpMethod.Post,
-            "management/v1/projects/_search"
-        );
-        searchReq.Headers.Add(OrgIdHeader, orgId);
-        searchReq.Content = JsonContent.Create(
-            new
-            {
-                queries = new object[]
-                {
-                    new
-                    {
-                        nameQuery = new
-                        {
-                            name,
-                            method = "TEXT_QUERY_METHOD_EQUALS",
-                        },
-                    },
+                    Name = name,
+                    Method = OrgTextQueryMethod.Equals,
                 },
             }
         );
-        using var searchResp = await http.SendAsync(searchReq, ct);
-        searchResp.EnsureSuccessStatusCode();
-        return await ReadFirstResultIdAsync(searchResp, $"project '{name}'", ct);
-    }
-
-    private static async Task<string> ReadIdAsync(HttpResponseMessage resp, CancellationToken ct)
-    {
-        var doc = await resp.Content.ReadFromJsonAsync<JsonElement>(ct);
-        return doc.GetProperty("id").GetString()
-            ?? throw new InvalidOperationException("ZITADEL response missing 'id' field.");
-    }
-
-    private static async Task<string> ReadFirstResultIdAsync(
-        HttpResponseMessage resp,
-        string what,
-        CancellationToken ct
-    )
-    {
-        var doc = await resp.Content.ReadFromJsonAsync<JsonElement>(ct);
-        var result = doc.GetProperty("result");
-        if (result.ValueKind != JsonValueKind.Array || result.GetArrayLength() == 0)
+        var found = await client.ListOrganizationsAsync(search, cancellationToken: ct);
+        if (found.Result.Count == 0)
         {
             throw new InvalidOperationException(
-                $"ZITADEL search for {what} returned no results, but create reported a conflict."
+                $"ZITADEL search for org '{name}' returned no results, but create reported a conflict."
             );
         }
-        return result[0].GetProperty("id").GetString()
-            ?? throw new InvalidOperationException(
-                $"ZITADEL search result for {what} missing 'id' field."
-            );
+        return found.Result[0].Id;
     }
 
-    private static async Task ThrowFromAsync(
-        HttpResponseMessage resp,
-        string action,
+    private static async Task<string> EnsureProjectAsync(
+        ManagementService.ManagementServiceClient client,
+        string name,
         CancellationToken ct
     )
     {
-        var body = await resp.Content.ReadAsStringAsync(ct);
-        throw new InvalidOperationException(
-            $"ZITADEL {action} failed: {(int)resp.StatusCode} {resp.StatusCode}; body: {body}"
+        try
+        {
+            var resp = await client.AddProjectAsync(
+                new AddProjectRequest { Name = name },
+                cancellationToken: ct
+            );
+            return resp.Id;
+        }
+        catch (RpcException ex) when (ex.StatusCode == StatusCode.AlreadyExists)
+        {
+            // Fall through to search by name.
+        }
+
+        var search = new ListProjectsRequest();
+        search.Queries.Add(
+            new global::Zitadel.Project.V1.ProjectQuery
+            {
+                NameQuery = new global::Zitadel.Project.V1.ProjectNameQuery
+                {
+                    Name = name,
+                    Method = ProjectTextQueryMethod.Equals,
+                },
+            }
         );
+        var found = await client.ListProjectsAsync(search, cancellationToken: ct);
+        if (found.Result.Count == 0)
+        {
+            throw new InvalidOperationException(
+                $"ZITADEL search for project '{name}' returned no results, but create reported a conflict."
+            );
+        }
+        return found.Result[0].Id;
     }
 
     // Resolve a possibly-relative path against cwd, then walk upward looking

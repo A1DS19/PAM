@@ -2,7 +2,6 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Options;
 using Pam.Players.Data;
 using Pam.Players.Infrastructure.Zitadel;
 using Pam.Players.Players.Brands;
@@ -47,21 +46,14 @@ public static class PlayersModule
             .ValidateOnStart();
 
         services.AddSingleton<ZitadelRuntimeState>();
-        services.AddTransient<ZitadelTokenHandler>();
+        services.AddSingleton<ZitadelClientFactory>();
 
-        services.AddHttpClient("zitadel-bootstrap");
+        // The HttpClient here is only used for the readiness probe against
+        // /.well-known/openid-configuration. The gRPC clients have their own
+        // HttpClient managed inside the smartive lib.
         services.AddHttpClient("zitadel-readiness");
 
-        services
-            .AddHttpClient<IIdentityProvider, ZitadelIdentityProvider>(
-                (sp, http) =>
-                {
-                    var opts = sp.GetRequiredService<IOptions<ZitadelOptions>>().Value;
-                    http.BaseAddress = new Uri(opts.ManagementApiBaseUrl.TrimEnd('/') + "/");
-                }
-            )
-            .AddHttpMessageHandler<ZitadelTokenHandler>();
-
+        services.AddScoped<IIdentityProvider, ZitadelIdentityProvider>();
         services.AddHostedService<ZitadelBootstrapService>();
 
         services
