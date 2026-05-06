@@ -71,14 +71,17 @@ What's deferred and the trigger that should bring each forward.
   needed when async outbox flows span multiple traces.
 
 ### Production secret store
-- **Status**: Infisical wired. Self-hosted in `docker-compose.yml`. The
-  `InfisicalSecretsConfigurationProvider` in `Pam.Api` is opt-in via env
-  vars and falls back to `appsettings.json` when not configured.
-- **Open**: bootstrap is currently manual UI-driven (admin account,
-  organization, project, machine identity). Automate with the Infisical
-  CLI in deploy pipelines once we have one.
-- **Open**: rotate the dev `ENCRYPTION_KEY` and `AUTH_SECRET` for staging
-  and prod (currently hardcoded dev values in compose).
+- **Status**: env-var-driven. Orchestrator (systemd / k3s / Swarm) injects
+  secrets as env vars; ASP.NET maps `__` → `:` over `appsettings.{env}.json`.
+  No in-process secret-fetching code. (An Infisical prototype was removed
+  in `3b4d6e9` — see commit message.)
+- **Open**: pick a dedicated secret store when there's a real production
+  deploy target. Candidates: HashiCorp Vault (most flexible, heaviest ops),
+  SOPS + age (file-based, GitOps-friendly, no server), k3s External Secrets
+  (cleanest if we land on k3s).
+- **Trigger**: first staging or production environment that needs more
+  than orchestrator-managed env vars (rotation, audit, fine-grained access
+  controls, multi-team isolation).
 
 ### Tests
 - **Done**: pure-domain unit tests in `tests/Pam.Players.UnitTests/`

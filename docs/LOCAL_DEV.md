@@ -19,6 +19,9 @@ make migrate-update MODULE=Players
 
 # 3. Run the API.
 make run
+
+# 4. (Optional) Run the unit tests.
+make test
 ```
 
 API at `http://localhost:5000`. Scalar UI at `/scalar/v1`. OpenAPI spec at
@@ -46,13 +49,10 @@ curl -i -X POST http://localhost:5000/v1/auth/register \
 |---|---|---|
 | Postgres (PAM) | 5432 | user: `pam`, db: `pam` |
 | Postgres (Keycloak) | 5433 | user: `keycloak`, db: `keycloak` |
-| Postgres (Infisical) | 5434 | user: `infisical`, db: `infisical` |
 | Keycloak | 8080 | admin: `admin/admin`; realm import on startup |
 | RabbitMQ | 5672 (amqp), 15672 (UI) | user: `pam` |
-| Redis (PAM) | 6379 | password: `redis_dev_password` (currently disabled in compose due to port conflict) |
-| Redis (Infisical) | 6381 | internal to Infisical |
-| Seq | 5341 (ingest), 8090 (UI) | currently disabled in compose due to port conflict |
-| Infisical | 8085 (UI/API) | first-time setup via UI; see Secrets below |
+| Redis | 6379 | password: `redis_dev_password` |
+| Seq | 5341 (ingest), 8090 (UI) | optional log viewer |
 | Pam.Api | 5000 | |
 
 ### Known port conflicts
@@ -128,56 +128,26 @@ discovers endpoints via the `DependencyContextAssemblyCatalog` registered in
 | API host, DI wiring, auth, healthchecks, OpenAPI | `src/Bootstrapper/Pam.Api/` |
 | Keycloak realm import + post-import setup | `infra/keycloak/realms/`, `infra/keycloak/setup/` |
 
-## Secrets (Infisical)
+## Secrets
 
-Infisical runs as a service in `docker-compose.yml`. Local dev does **not**
-require it — `Pam.Api` falls back to `appsettings.{env}.json` when the
-Infisical env vars aren't set. Use it when you want prod-like behavior or
-when you're testing the secret-loading path.
+Local dev: `appsettings.json` and `appsettings.Development.json` carry
+working values for Keycloak, Postgres, Redis, RabbitMQ. Nothing here is
+production-grade — credentials are dev defaults.
 
-### One-time UI bootstrap
-
-Infisical's first-run sequence happens through the web UI; it can't be
-fully scripted without using internal APIs.
-
-1. Open `http://localhost:8085`.
-2. Create the first admin account.
-3. Create an organization (e.g., `pam`).
-4. Create a project (e.g., `pam-dev`). Note the **Project ID** — paste it
-   into `appsettings.{env}.json` under `Infisical:ProjectId`.
-5. Add the environments you want (`dev`, `staging`, `production` — `dev`
-   exists by default).
-6. Add secrets in the `dev` environment. Use `__` as the nesting separator
-   so it maps to ASP.NET configuration:
-
-   ```
-   ConnectionStrings__Pam      → ConnectionStrings:Pam
-   ConnectionStrings__Redis    → ConnectionStrings:Redis
-   Keycloak__AdminPassword     → Keycloak:AdminPassword
-   MessageBroker__Password     → MessageBroker:Password
-   ```
-
-7. Create a **Machine Identity** (Access Control → Identities). Attach the
-   `Universal Auth` method, generate a Client ID + Client Secret, and grant
-   the identity Read access to the project's `dev` environment.
-
-### Run with Infisical
-
-Export the Machine Identity credentials before `make run`:
+Override locally without committing: either `dotnet user-secrets` (per
+project) or environment variables (ASP.NET layers env vars over
+appsettings using `__` as the nesting separator):
 
 ```bash
-export INFISICAL_CLIENT_ID=<from UI>
-export INFISICAL_CLIENT_SECRET=<from UI>
+export ConnectionStrings__Pam="Host=localhost;Database=pam;Username=pam;Password=<your-pw>"
+export Keycloak__AdminPassword="<your-pw>"
 make run
 ```
 
-The configuration provider runs at startup, fetches all secrets in the
-configured environment+path, maps `__` → `:`, and the values override
-`appsettings.json`. If the call fails or env vars are missing, it's a
-no-op (Optional=true) and `appsettings.json` values stand.
-
-To force the API to fail fast on missing Infisical config, set
-`Infisical:Optional` to `false` in the relevant `appsettings.{env}.json`.
+Production: secrets arrive as env vars from whatever orchestrator runs the
+API (systemd unit, k3s Secret, Swarm secret). A dedicated secret store
+(HashiCorp Vault, SOPS, k3s External Secrets, etc.) is open — see
+`ROADMAP.md`.
 
 ## Scalar / OpenAPI
 

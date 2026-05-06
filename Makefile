@@ -17,10 +17,10 @@ help:
 	@echo "  make test                                 - dotnet test"
 	@echo "  make run                                  - Run Pam.Api with hot reload"
 	@echo "  make clean                                - dotnet clean + remove bin/obj"
-	@echo "  make migrate-add MODULE=Player NAME=X     - Add an EF migration"
-	@echo "  make migrate-update MODULE=Player         - Apply migrations"
-	@echo "  make migrate-remove MODULE=Player         - Remove last migration"
-	@echo "  make migrate-status MODULE=Player         - List migrations"
+	@echo "  make migrate-add MODULE=Players NAME=X     - Add an EF migration"
+	@echo "  make migrate-update MODULE=Players         - Apply migrations"
+	@echo "  make migrate-remove MODULE=Players         - Remove last migration"
+	@echo "  make migrate-status MODULE=Players         - List migrations"
 
 up:
 	$(DC) up -d
@@ -55,10 +55,10 @@ clean:
 
 migrate-add:
 ifndef MODULE
-	$(error MODULE is required, e.g. make migrate-add MODULE=Player NAME=InitialPlayer)
+	$(error MODULE is required, e.g. make migrate-add MODULE=Players NAME=InitialPlayer)
 endif
 ifndef NAME
-	$(error NAME is required, e.g. make migrate-add MODULE=Player NAME=InitialPlayer)
+	$(error NAME is required, e.g. make migrate-add MODULE=Players NAME=InitialPlayer)
 endif
 	@dotnet ef migrations add $(NAME) \
 		--project $(PROJ_OF_MODULE) \
@@ -68,7 +68,7 @@ endif
 
 migrate-update:
 ifndef MODULE
-	$(error MODULE is required, e.g. make migrate-update MODULE=Player)
+	$(error MODULE is required, e.g. make migrate-update MODULE=Players)
 endif
 	@dotnet ef database update \
 		--project $(PROJ_OF_MODULE) \
@@ -77,7 +77,7 @@ endif
 
 migrate-remove:
 ifndef MODULE
-	$(error MODULE is required, e.g. make migrate-remove MODULE=Player)
+	$(error MODULE is required, e.g. make migrate-remove MODULE=Players)
 endif
 	@dotnet ef migrations remove \
 		--project $(PROJ_OF_MODULE) \
@@ -86,7 +86,7 @@ endif
 
 migrate-status:
 ifndef MODULE
-	$(error MODULE is required, e.g. make migrate-status MODULE=Player)
+	$(error MODULE is required, e.g. make migrate-status MODULE=Players)
 endif
 	@dotnet ef migrations list \
 		--project $(PROJ_OF_MODULE) \

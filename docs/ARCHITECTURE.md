@@ -158,25 +158,28 @@ Three rules, repeat in code review:
 
 Two-layer model:
 
-1. **Non-secret config** (URLs, log levels, feature flags, the Infisical
-   project ID itself) lives in `appsettings.{env}.json`, committed.
+1. **Non-secret config** (URLs, log levels, feature flags) lives in
+   `appsettings.{env}.json`, committed.
 2. **Secrets** (DB connection strings, Keycloak admin credentials, RabbitMQ
-   passwords, JWT signing keys, payment-provider HMACs) live in **Infisical**,
-   self-hosted in `docker-compose.yml` and run on the on-prem hardware in
-   non-dev environments.
+   passwords, JWT signing keys, payment-provider HMACs) arrive as
+   environment variables from the host. ASP.NET's default configuration
+   precedence reads env vars over `appsettings.{env}.json` and treats `__`
+   as the nesting separator (`Keycloak__AdminPassword` →
+   `Keycloak:AdminPassword`).
 
-The `Pam.Api` host carries an `InfisicalSecretsConfigurationProvider` that
-runs at startup, authenticates via Universal Auth (Machine Identity), pulls
-secrets from a project + environment, maps `__` → `:` to match ASP.NET
-configuration keys, and inserts them as the highest-priority configuration
-source. When `INFISICAL_CLIENT_ID` / `INFISICAL_CLIENT_SECRET` env vars are
-absent, the provider is a no-op and `appsettings.json` wins (the local-dev
-default).
+In production those env vars are injected by whatever orchestrator runs
+the API — systemd unit, k3s Secret, Swarm secret. The orchestrator-managed
+secret model is sufficient for the current deployment shape; a dedicated
+secret store (HashiCorp Vault, SOPS, k3s External Secrets, ...) is an
+open question pinned in `ROADMAP.md` and will be evaluated when the first
+real production deploy lands.
 
-The Machine Identity credentials themselves are the bootstrap secret. In
-prod they're injected as env vars by whatever orchestrator runs the API
-(systemd unit, k3s Secret, Swarm secret); they are **not** committed and
-**not** stored back in Infisical (chicken-and-egg).
+There is no in-process secret-fetching code. An earlier prototype wired
+Infisical via a custom `IConfigurationSource`; it was removed because the
+bootstrap (admin / org / project / machine identity) was UI-only and never
+automated, and the dev encryption keys lived hardcoded in compose. The
+plain env-var path matches what every reasonable orchestrator already does
+and avoids carrying an unowned dependency.
 
 ## Outbox is not wired yet
 
