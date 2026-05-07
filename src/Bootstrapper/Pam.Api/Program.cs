@@ -192,7 +192,7 @@ app.MapCarter();
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi().AllowAnonymous();
-    app.MapScalarApiReference(opt => opt.WithTitle("PAM API").WithTheme(ScalarTheme.Purple))
+    app.MapScalarApiReference(opt => opt.WithTitle("PAM API").WithTheme(ScalarTheme.BluePlanet))
         .AllowAnonymous();
 }
 
