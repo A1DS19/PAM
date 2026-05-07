@@ -4,10 +4,8 @@
 
 - .NET 10 SDK (10.0.106 or later patch — pinned in `global.json` with
   `latestFeature` rollForward)
-- Docker Desktop / Podman with Compose
+- Docker (or Podman) with Compose
 - `make`
-- `python3` (used by `infra/zitadel/bootstrap.sh`)
-- `curl`
 
 ## First-time setup (mprocs — recommended)
 
@@ -17,68 +15,51 @@ mprocs                     # one command; two panes
 
 `mprocs.yaml` runs two procs:
 
-- `services` — `docker compose up` (Postgres, ZITADEL, RabbitMQ, Redis, Seq) in foreground
-- `api` — sleeps 30s for compose to settle, then `make dev-api` (apply migrations + `dotnet watch`)
-
-The API self-bootstraps ZITADEL on startup. `ZitadelBootstrapService` (an `IHostedService`) waits for ZITADEL's OIDC discovery endpoint, reads the admin PAT that ZITADEL writes to `infra/zitadel/machinekey/zitadel-admin-sa.pat` on first init, then ensures the two Orgs (`betanything-eu`, `betanything-latam-stub`) and the `pam-player-api` Project exist. Idempotent — re-runs find by name on conflict.
+- `services` — `docker compose up` (Postgres, RabbitMQ, Redis, Seq) in foreground
+- `api` — `make dev-api` (apply migrations + `dotnet watch`)
 
 Switch panes with `Tab`; quit with `q` or `Ctrl-C`.
 
 ## First-time setup (manual)
 
 ```bash
-make up                              # docker compose up -d
-make migrate-update MODULE=Players   # apply EF migrations
-make dev-api                         # dotnet watch — bootstrap runs at startup
-make test                            # 22 unit tests, ~40ms (separate terminal)
+make up                                  # docker compose up -d
+make migrate-update MODULE=Operators     # apply EF migrations
+make dev-api                             # dotnet watch
+make test                                # unit tests in a separate terminal
 ```
 
 | URL | What |
 |---|---|
 | `http://localhost:5000` | PAM API |
 | `http://localhost:5000/scalar/v1` | Scalar OpenAPI UI |
-| `http://localhost:8080/ui/console/` | ZITADEL admin console |
-| `http://localhost:3001/ui/v2/login/` | ZITADEL Login UI v2 (Next.js) |
 | `http://localhost:8090` | Seq logs (no auth in dev) |
-
-ZITADEL v4 splits its UI into two services: `zitadel` (Go, port 8080)
-serves the admin Console and the OIDC API; `zitadel-login` (Next.js,
-port 3001) serves the user login pages. The Console redirects to
-`localhost:3001/ui/v2/login/...` for authentication, which talks back
-to the API on the docker-internal network. Initial admin:
-`zitadel-admin@zitadel.localhost` / `Password1!`.
 
 ## Smoke test
 
 ```bash
-# Default brand (betanything-eu) — no header needed.
-curl -i -X POST http://localhost:5000/v1/auth/register \
+# Create a brand.
+curl -i -X POST http://localhost:5000/v1/operators/brands \
   -H "Content-Type: application/json" \
-  -d '{
-    "email": "alice@example.com",
-    "password": "Aa1!aaaaaaaaaa",
-    "firstName": "Alice",
-    "lastName": "Tester",
-    "dateOfBirth": "1990-04-15",
-    "countryCode": "US"
-  }'
-# → 201 Created, Location: /v1/players/<player-id>
+  -d '{"name":"BetAnything EU","slug":"betanything-eu","jurisdiction":"EU"}'
+# → 201 Created
+#   Location: /v1/operators/brands/<brand-id>
+#   { "id": "<brand-id>" }
 
-# Explicit brand via X-Brand header (provisioned LATAM stub Org).
-curl -i -X POST http://localhost:5000/v1/auth/register \
-  -H "Content-Type: application/json" \
-  -H "X-Brand: betanything-latam-stub" \
-  -d '{ ... }'
+# Read it back.
+curl -s http://localhost:5000/v1/operators/brands/<brand-id> | jq
 ```
+
+The API is anonymous in Phase 2. Authentication arrives in Phase 3 with
+the `Pam.Identity` module (OpenIddict + ASP.NET Identity); endpoints will
+then default to `RequireAuthorization` and individual ones opt out via
+`.AllowAnonymous()`.
 
 ## Service ports
 
 | Service | Host port | Notes |
 |---|---|---|
-| Postgres (PAM) | 5432 | user: `pam`, db: `pam` |
-| Postgres (ZITADEL) | 5433 | user: `postgres`, db: `zitadel` |
-| ZITADEL API + Console | 8080 | OIDC issuer; insecure dev mode |
-| ZITADEL Login UI v2 | 3001 | Next.js login UI, talks to API internally |
+| Postgres | 5432 | user: `pam`, db: `pam` |
 | RabbitMQ | 5672 (amqp), 15672 (UI) | user: `pam` |
 | Redis | 6379 | password: `redis_dev_password` |
 | Seq | 5341 (ingest), 8090 (UI) | optional log viewer |
@@ -95,82 +76,127 @@ defaults, our `redis` and `seq` services will fail to start. Either:
 
 ## EF migrations
 
-The Makefile is parameterized by `MODULE`. The module directory must be
-plural (e.g. `Players`):
+The Makefile is parameterized by `MODULE`:
 
 ```bash
-make migrate-add MODULE=Players NAME=AddSomething
-make migrate-update MODULE=Players
-make migrate-status MODULE=Players
-make migrate-remove MODULE=Players      # removes the last unapplied migration
+make migrate-add MODULE=Operators NAME=AddSomething
+make migrate-update MODULE=Operators
+make migrate-status MODULE=Operators
+make migrate-remove MODULE=Operators      # removes the last unapplied migration
 ```
 
-A `IDesignTimeDbContextFactory<PlayersDbContext>` lives in
-`src/Modules/Players/Pam.Players/Data/`, so EF tooling does not require a
-startup project. The connection string can be overridden via the
-`PAM_CONNECTION` env var (defaults to the local compose).
+A `IDesignTimeDbContextFactory<OperatorsDbContext>` lives in
+`src/Modules/Operators/Pam.Operators/Data/`, so EF tooling can spin up the
+context standalone. The connection string can be overridden via
+`PAM_DESIGN_CONNECTION` env var (defaults to the local compose).
 
-## Resetting ZITADEL
-
-Wipe the ZITADEL eventstore + machinekey and bring it back up clean (does
-not touch `pam-postgres`):
-
-```bash
-make zitadel-reset
-```
-
-The next API start will re-create Orgs and Project against the fresh
-instance.
+`Microsoft.EntityFrameworkCore.Design` is a `PackageReference` on
+`Pam.Api` (the startup project). EF Tools require it there even though
+the design-time factory is in the module project — the error message
+("Your startup project doesn't reference …") is misleading.
 
 ## Adding a feature
 
-The `Register` feature in
-`src/Modules/Players/Pam.Players/Players/Features/Register/` is the canonical
-template. Five files per feature:
+The `CreateBrand` feature in
+`src/Modules/Operators/Pam.Operators/Brands/Features/CreateBrand/` is the
+canonical template. Four files per feature:
 
 ```
 <FeatureName>/
-├── <FeatureName>.cs           # ICommand<TResponse> or IQuery<TResponse> record
-├── <FeatureName>Validator.cs  # AbstractValidator<TCommand>
-├── <FeatureName>Handler.cs    # ICommandHandler<,> or IQueryHandler<,>
-├── <FeatureName>Endpoint.cs   # ICarterModule with one MapPost/Get/...
-└── (optional) DomainEventHandler — if the command raises events
+├── <FeatureName>Command.cs     # ICommand<TResponse> or IQuery<TResponse>
+├── <FeatureName>Validator.cs   # AbstractValidator<TCommand>
+├── <FeatureName>Handler.cs     # ICommandHandler<,> or IQueryHandler<,>
+└── <FeatureName>Endpoint.cs    # ICarterModule with one MapPost/Get/...
 ```
 
 MediatR + FluentValidation auto-discover via assembly scanning. Carter
-discovers endpoints via the `DependencyContextAssemblyCatalog` registered in
-`Program.cs`. No manual DI registration needed for any of the five.
+discovers endpoints via the `DependencyContextAssemblyCatalog` registered
+in `Program.cs`. No manual DI registration needed.
+
+Domain events live alongside the aggregate
+(`<Concept>/Events/<Event>.cs`); a sibling
+`<Concept>/EventHandlers/<Event>DomainHandler.cs` listens for the domain
+event and publishes the corresponding integration event from
+`Pam.<Module>.Contracts`.
+
+## Adding a module
+
+Mirror `Pam.Operators`. Three projects per module, plus the test project:
+
+```
+src/Modules/<Module>/
+  Pam.<Module>/                 # csproj + <Module>Module.cs at root
+  Pam.<Module>.Contracts/       # DTOs, IQuery<T>, integration events
+tests/Pam.<Module>.UnitTests/
+```
+
+`<Module>Module.cs` exposes two extension methods used by `Pam.Api`:
+
+- `AddXModule(this IServiceCollection, IConfiguration)` — registers
+  DbContext, interceptors, health checks.
+- `UseXModuleAsync(this IServiceProvider)` — runs `MigrateAsync` on
+  startup.
+
+Interceptors (`AuditableSaveChangesInterceptor`,
+`DispatchDomainEventsInterceptor` from `Pam.Shared`) are registered with
+`services.TryAddScoped<...>()` so multiple modules don't conflict.
+
+Persistence uses schema-per-module (`modelBuilder.HasDefaultSchema("…")`)
+plus snake_case columns (`options.UseSnakeCaseNamingConvention()` from
+the `EFCore.NamingConventions` package — apply on **both** runtime and
+design-time DbContext setup). Health probe via
+`AddHealthChecks().AddNpgSql(connectionString, name: "<module>-db",
+tags: ["ready", "module:<module>"])`.
+
+After scaffolding the module, register it in `Pam.Api`:
+
+```csharp
+var moduleAssemblies = new[] { typeof(OperatorsModule).Assembly /*, …*/ };
+
+builder.Services.AddPamMediatR(moduleAssemblies);
+builder.Services.AddCarter(new DependencyContextAssemblyCatalog(moduleAssemblies));
+builder.Services.AddOperatorsModule(builder.Configuration);
+// later: await app.Services.UseOperatorsModuleAsync();
+```
 
 ## Where things live
 
 | Concern | Location |
 |---|---|
 | Cross-cutting infra (DDD primitives, behaviors, exceptions, interceptors) | `src/Shared/Pam.Shared/` |
-| CQRS interfaces, IDomainEvent, typed-id helpers | `src/Shared/Pam.Shared.Contracts/` |
+| CQRS interfaces, IDomainEvent, Actor, PamIds | `src/Shared/Pam.Shared.Contracts/` |
 | MassTransit registration, IntegrationEvent base | `src/Shared/Pam.Shared.Messaging/` |
-| Per-module aggregates, features, infra | `src/Modules/<Module>/Pam.<Module>/` |
-| Public integration events / read-model interfaces | `src/Modules/<Module>/Pam.<Module>.Contracts/` |
-| API host, DI wiring, auth, healthchecks, OpenAPI | `src/Bootstrapper/Pam.Api/` |
-| ZITADEL bootstrap (orgs + project + PAT load) | `Pam.Players/Infrastructure/Zitadel/ZitadelBootstrapService.cs` |
+| Per-module aggregates, features, EF, wire-up | `src/Modules/<Module>/Pam.<Module>/` |
+| Public DTOs, queries, integration events | `src/Modules/<Module>/Pam.<Module>.Contracts/` |
+| API host, DI wiring, OTel, health, OpenAPI | `src/Bootstrapper/Pam.Api/` |
 
 ## Secrets
 
-Local dev: `appsettings.json` carries non-secret defaults. The ZITADEL
-admin PAT is read from a file path (`Zitadel:AdminPatFile`, default
-`infra/zitadel/machinekey/zitadel-admin-sa.pat`) by the bootstrap
-service at startup — ZITADEL writes that file on first init via the
-`ZITADEL_FIRSTINSTANCE_PATPATH` setting in `docker-compose.yml`.
+Local dev: `appsettings.json` carries non-secret defaults.
 
 Production: secrets arrive as env vars from whatever orchestrator runs
-the API (systemd unit, k3s Secret, Swarm secret). The PAT-on-disk model
-is dev-only; in production ZITADEL credentials would be issued via a
-machine user provisioned by IaC and stored in the secret store. A
-dedicated store (HashiCorp Vault, SOPS, k3s External Secrets, etc.) is
-open — see `ROADMAP.md`.
+the API (systemd unit, k3s Secret, Swarm secret). ASP.NET's default
+configuration precedence reads env vars over `appsettings.{env}.json`
+and treats `__` as the nesting separator. A dedicated secret store
+(HashiCorp Vault, SOPS, k3s External Secrets, etc.) is open — see
+[`ROADMAP.md`](ROADMAP.md).
 
 ## Scalar / OpenAPI
 
-Scalar UI is dev-only (`if (app.Environment.IsDevelopment())`). To enable in
-staging or behind admin auth, pull `MapOpenApi()` and `MapScalarApiReference()`
-out of the dev-only block in `Program.cs` and add the appropriate
-`RequireAuthorization` chain.
+Scalar UI is dev-only (`if (app.Environment.IsDevelopment())`). To enable
+in staging or behind admin auth, pull `MapOpenApi()` and
+`MapScalarApiReference()` out of the dev-only block in `Program.cs` and
+add the appropriate `RequireAuthorization` chain.
+
+## Common gotchas
+
+- `dotnet run --no-build` runs the cached DLL — newly generated
+  migrations won't be picked up. Always `dotnet build` after
+  `make migrate-add` before re-running the API.
+- `BannedSymbols.txt` blocks `DateTime.UtcNow`, `DateTime.Now`, and
+  `DateTimeOffset.Now`. `DateTimeOffset.UtcNow` is allowed (intentional —
+  see the `IntegrationEvent` base record).
+- `dotnet watch` watches files reachable from `Pam.Api`. If
+  `mprocs.log` (or any other runtime artifact) ends up triggering hot
+  reload, exclude it via `<Watch Remove="..."/>` in the relevant csproj
+  or a `Directory.Build.props` entry.

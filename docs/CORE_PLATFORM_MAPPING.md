@@ -20,30 +20,30 @@ translations, and limits.
 
 | Core Platform section | PAM module | Status |
 |---|---|---|
-| Clients > Main / Notes / Settings | `Pam.Players` | v1 (Register only) |
+| Partners (Main / Payment / Product / Currency / Language / Provider / Limits / Country / Comp Points / Payment Info / Keys) | `Pam.Operators` (we use **Brand**, not Partner) | **v1 (Brand CRUD)** — `Pam.Operators` shipped Phase 2 with the `Brand` aggregate. More partner-scoped fields land as sub-aggregates. |
+| Users & Agents + Roles | `Pam.Identity` (back-office; OpenIddict + ASP.NET Identity) | **Phase 3 — in flight.** Embedded IDP, roles + permissions. |
+| Clients > Main / Notes / Settings | `Pam.Players` | deferred (returns as module #3, post-Identity) |
 | Clients > Sessions | `Pam.Players` (Sessions sub-aggregate) | deferred |
-| Clients > KYC | `Pam.Kyc` | deferred |
+| Clients > KYC | `Pam.Kyc` (likely starts inside `Pam.Players`) | deferred |
 | Clients > Limits & Exclusions / Product Limits | `Pam.Limits` | deferred |
-| Clients > Corrections / Deposits / Withdrawals / Account History / Transactions / Payment Info / Payment Settings | `Pam.Wallets` | deferred (most regulated) |
+| Clients > Corrections / Deposits / Withdrawals / Account History / Transactions / Payment Info / Payment Settings | `Pam.Wallet` | deferred (most regulated) |
 | Clients > Campaigns / Bets | `Pam.Bonuses` + `Pam.Bets` | deferred |
 | Clients > Tickets | `Pam.Support` | deferred |
 | Clients > Friends | `Pam.Affiliates` (referrals) | deferred |
 | Clients > Emails & SMSes / Provider Settings | `Pam.Notifications` + `Pam.Players` | deferred |
 | Online Clients (Real Time) | streaming projection over `Pam.Players` sessions | deferred |
 | Affiliates + Affiliate admin panel | `Pam.Affiliates` (separate module + own auth/admin UI) | deferred |
-| Users & Agents + Roles | `Pam.Operators` + ZITADEL operators audience | deferred |
-| Payments (global) | `Pam.Wallets` query side | deferred |
+| Payments (global) | `Pam.Wallet` query side | deferred |
 | Bets / Internet Bets / Bet Shops | `Pam.Bets` + `Pam.BetShops` | deferred |
 | Bonuses (Common + Triggers + Conditions DSL) | `Pam.Bonuses` | deferred (own design pass) |
 | Segments | `Pam.Segments` (cross-cutting query/projection) | deferred |
-| Partners (Main / Payment / Product / Currency / Language / Provider / Limits / Country / Comp Points / Payment Info / Keys) | `Pam.Partners` | **needs to land early** — see below |
 | Partners > Website Settings (fragments / banners / image bars / sport widgets / footer / casino / virtual / translations / styles) | `Pam.Cms` (heavy) | deferred |
 | Partners > Backup & Restore | event-sourced state per module | covered by event sourcing approach |
 | Bet Shops / Providers / Product Categories / Products | `Pam.GameCatalog` | deferred |
 | Accounting (bet shop monthly) | `Pam.Reporting` (read-side projection) | deferred |
 | Reports (Bets / Clients / Documents / Providers / Identity) | `Pam.Reporting` | deferred |
 | Notifications (sent log) | `Pam.Notifications` | deferred |
-| Currencies | reference data in `Pam.Partners` | deferred |
+| Currencies | reference data in `Pam.Operators` | deferred |
 | CRM Templates | `Pam.Notifications` (templates) | deferred |
 | CMS (Banners / Promotions / Regions / Comment Types / Job Areas / Translations / Enumerations / Security Questions / Online Shop) | `Pam.Cms` + `Pam.Shop` | deferred |
 | (Implicit) Game wallet integration with providers | `Pam.GameWallet` (separate host) | deferred |
@@ -60,20 +60,22 @@ Core Platform's "Partner" is everywhere but feels retrofitted. We bake it
 in from day one — under the term **Brand** (we're a single company running
 multiple consumer-facing brands; "Partner" is a B2B term that doesn't fit):
 
-- A `Brand` aggregate in `Pam.Operators` is the first non-Player concept
-  (POC ships a hardcoded `IBrandRegistry` until the module lands).
+- A `Brand` aggregate in `Pam.Operators` is the first module — shipped in
+  Phase 2.
 - Every other aggregate carries a `BrandId` foreign reference.
-- Brand maps to a ZITADEL Org. The same physical human registering on
-  Brand A and Brand B is two distinct `Player` rows (per-brand records);
-  cross-brand identity linking is a future optional `Subject` concept,
-  introduced only when regulation demands it.
-- A `IBrandContext` (resolved from the JWT's Org claim or, for anonymous
-  registration, from the `X-Brand` header) drives runtime scoping.
+- The same physical human registering on Brand A and Brand B is two
+  distinct `Player` rows (per-brand records); cross-brand identity linking
+  is a future optional `Subject` concept, introduced only when regulation
+  demands it.
+- Brand context for a back-office actor rides as a `brand_id` claim in
+  the JWT issued by the embedded IDP (`Pam.Identity`, Phase 3); for
+  anonymous flows (player registration, when Players returns), brand
+  context comes from a request header.
 - Each `DbContext` will gain a global query filter on `BrandId` so
   cross-brand reads are impossible by default once back-office endpoints
   arrive.
 - Operator endpoints can elevate to cross-brand access via a specific
-  policy (`operator.platformAdmin`).
+  permission (`operator.platform-admin`).
 
 Cost of doing this in v2: rewriting every query in every module. Cost of
 doing it now: one filter per DbContext. Easy choice.
@@ -152,17 +154,25 @@ Core Platform's lockout is primitive: 5 wrong passwords → "Force Block"
 that requires support intervention. Their state machine is
 Active/Blocked/Disabled/Force Block/Suspended.
 
-We have ZITADEL driving:
+We have **embedded OpenIddict + ASP.NET Core Identity** (`Pam.Identity`,
+Phase 3) driving:
 
-- Configurable brute-force protection per Org / instance policy.
-- MFA (TOTP, WebAuthn, SMS).
-- Session revocation tied to self-exclusion (`Limits` module emits
-  `SelfExclusionActivated` → `Pam.Players` calls
-  `IIdentityProvider.RevokeAllSessionsAsync`).
-- Federation for operators (Azure AD / Google Workspace).
+- Configurable brute-force protection (Identity lockout: 5 attempts → 5
+  min lockout out of the box; tunable).
+- MFA (TOTP via Identity authenticators; WebAuthn via OpenIddict + Fido2
+  package when the trigger arrives).
+- Refresh-token rotation with replay detection (OpenIddict's
+  authorization storage; on by default — strongly discouraged to disable).
+- Session/token revocation tied to self-exclusion: `Limits` emits
+  `SelfExclusionActivated` → `Pam.Identity` revokes the user's tokens via
+  OpenIddict's authorization-entry validation hook
+  (`EnableAuthorizationEntryValidation()`).
+- Federation for operators (external OIDC providers via OpenIddict's
+  client/validation stack — Azure AD, Google Workspace) when the
+  back-office team requires it.
 - Concurrent session limits, session listing, "log out everywhere."
 
-Their five player states map onto our richer state machine + ZITADEL
+Their five player states map onto our richer state machine + the IDP's
 session/credential state, with each transition emitting a domain event
 that Audit consumes.
 
@@ -218,27 +228,30 @@ operators must manually upload. We do:
 
 Ordered by what unblocks the most subsequent modules:
 
-1. **Pam.Operators (Brand + Jurisdiction registry)** — even before Wallet.
-   The POC ships a hardcoded `IBrandRegistry`; promote to a real module
-   before module #2. Without this, every later module has to be
-   retrofitted.
-2. **Pam.Players KYC + Sessions + Limits/Exclusions** — extending the
-   existing module. Pure additions, no boundary changes.
-3. **Operator audience (ZITADEL Project) + admin endpoints** — now we can
-   act on accounts. Unlocks back-office UI prototyping.
-4. **Pam.Wallets (double-entry ledger)** — the most regulated module.
-   Outbox is non-negotiable here.
-5. **Pam.GameCatalog + Pam.GameWallet (separate host)** — enables real
-   bets to flow.
-6. **Pam.Bets + Pam.Bonuses (with the typed DSL design)** — depends on
-   Wallet + GameCatalog.
-7. **Pam.Notifications + Pam.Audits** — subscribing modules; cheap once
-   integration events exist.
-8. **Pam.Affiliates** — own admin panel, commissions, referral tracking.
-9. **Pam.Cms + Pam.Shop** — biggest UI surface; can be built late.
-10. **Pam.Reporting** — read-side projections over events; can be
+1. **`Pam.Operators` (Brand aggregate)** — **shipped Phase 2.** Multi-tenant
+   foundation; every later aggregate carries `BrandId`.
+2. **`Pam.Identity` (OpenIddict + ASP.NET Core Identity)** — **Phase 3, in
+   flight.** Back-office Users & Agents, roles + permissions. Without
+   this no human can act on Brand or any future aggregate.
+3. **`Pam.Players`** (re-introduce as module #3) — Player aggregate
+   scoped under a Brand, authenticated via the embedded IDP. KYC,
+   sessions, limits land as sub-aggregates initially.
+4. **`Pam.Wallet` (double-entry ledger)** — the most regulated module.
+   Outbox is non-negotiable here. Brand + Identity + Players are
+   prerequisites.
+5. **`Pam.GameProviders` / `Pam.GameCatalog`** — enables real bets to
+   flow.
+6. **`Pam.GameWallet` (separate host)** — game-provider HMAC-signed
+   ingress, sub-200ms p99. Calls `Pam.Wallet` via contracts.
+7. **`Pam.Bets` + `Pam.Bonuses` (with the typed DSL design)** — depends
+   on Wallet + GameCatalog.
+8. **`Pam.Notifications` + `Pam.Audits`** — subscribing modules; cheap
+   once integration events exist.
+9. **`Pam.Affiliates`** — own admin panel, commissions, referral
+   tracking.
+10. **`Pam.Cms` + `Pam.Shop`** — biggest UI surface; can be built late.
+11. **`Pam.Reporting`** — read-side projections over events; can be
     incrementally added.
 
-The first-month-of-real-work focus is items 1-3 (Brands + KYC + Sessions
-+ Limits + Operators) plus the back-office UI scaffold. Item 4 (Wallets)
-is the next major milestone after that.
+The current focus is items 2-3 (Identity + Players return). Item 4
+(Wallet) is the next major milestone after that.

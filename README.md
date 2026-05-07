@@ -1,25 +1,32 @@
 # PAM — Player Admin Manager
 
 A regulated iGaming back-office system. Built as a .NET 10 modular
-monolith with an explicit path to extracting modules into services when
-scale or team-org demands it.
+monolith with explicit seams so individual modules can be extracted to
+their own services when scale or team-org demands it.
 
 ## Status
 
-Single module (`Pam.Players`) with one feature: `POST /v1/auth/register`.
-Multi-brand foundation in place (Brand → ZITADEL Org). Everything else
-(Wallets, KYC, Limits, Bonuses, Bets, Operators, Audit, CMS, Reporting) is
-deferred. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
+On `main`: Phase 1 cleanup (drop legacy Players + ZITADEL scaffolding) and
+Phase 2 (Operators module with Brand aggregate). The single live module is
+`Pam.Operators` exposing `POST /v1/operators/brands` and
+`GET /v1/operators/brands/{id}`.
+
+Phase 3 (next): `Pam.Identity` — embedded **OpenIddict + ASP.NET Core
+Identity** for back-office Users & Agents, with roles + permissions. After
+that, Players is re-introduced (now scoped under a brand and authenticated
+via the embedded IDP), then Wallet, KYC, Limits, Bonuses, Bets, Affiliates,
+Notifications, Reporting, Audit. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Stack
 
-- **.NET 10** · ASP.NET Core, EF Core 10, Postgres 17
-- **Identity:** ZITADEL (Org-per-Brand; player audience today, operator
-  audience pending)
+- **.NET 10** · ASP.NET Core, EF Core 10, Postgres 17 (schema-per-module)
+- **Identity:** embedded OpenIddict + ASP.NET Core Identity (Phase 3). MIT
+  / Apache-2.0 packages, runs in-process — no separate IDP host.
 - **Endpoints:** Carter (vertical slices), Scalar OpenAPI in dev
 - **Mediator + validation:** MediatR (held at 12.4.1, last MIT) +
   FluentValidation 12
 - **Messaging:** MassTransit 8.5.9 + RabbitMQ (outbox pending)
+- **Persistence:** Npgsql + EFCore.NamingConventions (snake_case columns)
 - **Observability:** Serilog (Seq optional), OpenTelemetry tracing /
   metrics / EF instrumentation
 - **Tests:** xUnit v3 + FluentAssertions 7.2.0
@@ -33,22 +40,21 @@ documented in [`docs/DECISIONS.md`](docs/DECISIONS.md).
 ## Quick start
 
 ```bash
-make up                              # Postgres, ZITADEL, RabbitMQ, etc. + bootstrap
-make migrate-update MODULE=Players   # apply EF migrations
-make run                             # dotnet watch
-make test                            # 22 unit tests, ~40ms
+make up                                # Postgres, Redis, RabbitMQ, Seq
+make migrate-update MODULE=Operators   # apply EF migrations
+make run                               # dotnet watch
+make test                              # unit tests, ~80ms
 ```
 
-API at `http://localhost:5000`. Scalar UI at `/scalar/v1`. ZITADEL console
-at `http://localhost:8080`. Smoke test in
+API at `http://localhost:5000`. Scalar UI at `/scalar/v1`. Smoke test in
 [`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md).
 
 ## Documentation
 
 | Doc | Purpose |
 |---|---|
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | The **why** — module boundaries, identity model, brand model, audit, error model, time, secrets, domain vs integration events, aggregate sizing rules. |
-| [`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md) | First-time setup, service ports, EF migration commands, feature template, secrets, OpenAPI/Scalar. |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | The **why** — module boundaries, per-module pattern, identity model, brand model, audit, error model, time, secrets, domain vs integration events, aggregate sizing rules. |
+| [`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md) | First-time setup, service ports, EF migration commands, feature template, OpenAPI/Scalar. |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Deferred work and the trigger that brings each forward. |
 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | ADR-style log of architectural decisions. |
 | [`docs/CORE_PLATFORM_MAPPING.md`](docs/CORE_PLATFORM_MAPPING.md) | Section-by-section mapping of the legacy "Core Platform" feature surface onto planned PAM modules, with the "10x better" decisions. |
@@ -57,28 +63,26 @@ at `http://localhost:8080`. Smoke test in
 
 ```
 src/
-  Bootstrapper/Pam.Api/          ASP.NET host: DI, auth, OTel, rate limit, health
+  Bootstrapper/Pam.Api/          ASP.NET host: DI, OTel, rate limit, health
   Modules/<Module>/
-    Pam.<Module>/                aggregates, features, infra (per-module)
-    Pam.<Module>.Contracts/      public integration events + read-model interfaces
+    Pam.<Module>/                aggregates, features, EF, module wire-up
+    Pam.<Module>.Contracts/      DTOs, IQuery<T>, integration events
   Shared/
-    Pam.Shared/                  DDD primitives, MediatR behaviors, EF interceptors,
-                                 IClock, IUserContext, exceptions
-    Pam.Shared.Contracts/        ICommand/IQuery, IDomainEvent, Actor, PamIds
-    Pam.Shared.Messaging/        MassTransit registration, IntegrationEvent base
+    Pam.Shared/                  DDD primitives, MediatR behaviors, EF
+                                 interceptors, IClock, IUserContext
+    Pam.Shared.Contracts/        ICommand/IQuery, IDomainEvent, Actor
+    Pam.Shared.Messaging/        MassTransit registration, IntegrationEvent
 tests/
-  Pam.Players.UnitTests/         pure-domain tests on xUnit 3
-infra/
-  zitadel/bootstrap.sh           idempotent ZITADEL Org/Project setup
+  Pam.<Module>.UnitTests/        pure-domain tests on xUnit 3
 docs/                            see table above
 ```
 
 ## Adding a feature
 
-The `Register` feature in
-`src/Modules/Players/Pam.Players/Players/Features/Register/` is the
-canonical template. Five files per feature: command, validator, handler,
-endpoint, optional domain-event handler. MediatR + FluentValidation +
+The `CreateBrand` feature in
+`src/Modules/Operators/Pam.Operators/Brands/Features/CreateBrand/` is the
+canonical template. Four files per feature: command, validator, handler,
+endpoint (+ optional domain-event handler). MediatR + FluentValidation +
 Carter all auto-discover via assembly scanning — no manual DI
 registration. Full walkthrough in
 [`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md#adding-a-feature).

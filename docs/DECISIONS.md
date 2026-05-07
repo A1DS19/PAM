@@ -9,7 +9,153 @@ Rough ADR shape, kept terse. Order is reverse-chronological.
 
 ---
 
+## 20. Roles + Permissions for back-office authz, not roles only — 2026-05-07
+
+**Context.** The peer `pro-cr-billing` project uses three role-based
+policies (Owner / Accountant / Operator) with no permission layer. The
+PAM operator manual ("Employee Access and Security") and the legacy
+`IqSoft.CP.BLL.PermissionBll` both demand fine-grained per-action
+permissions. Retrofitting permissions across endpoints once dozens are
+in place is painful.
+
+**Decision.** Phase 3 `Pam.Identity` ships with both:
+- `IdentityRole<Guid>` (Owner / Manager / Operator / Accountant — coarse
+  buckets, seeded at startup).
+- A custom `Permission` + `RolePermission` join (well-known string codes
+  like `operators.read`, `players.write`).
+
+Both project as claims at token-issuance time via `SetDestinations`.
+`[Authorize(Policy = "Permissions.Players.Read")]` and `RequireRole(...)`
+are both supported; choose the granularity each endpoint actually needs.
+
+**Consequences.**
+- Slightly more code at module start. Big payoff when a customer-support
+  team needs to do X but not Y.
+- Permission codes live as constants in `Pam.Identity.Contracts`; other
+  modules reference those constants (no string typos).
+
+---
+
+## 19. Per-module 3-project pattern with Add+Use extension methods — 2026-05-07
+
+**Context.** Without a written rule, module shape drifts. Some modules
+might grow Application/Domain/Infrastructure layers, others go vertical
+slice, others mix. Future readers and `ultrareview`-style architecture
+checks need a single template.
+
+**Decision.** Every module ships as exactly three projects:
+- `Pam.<Module>.Contracts` — DTOs, `IQuery<T>`, integration events.
+- `Pam.<Module>` — aggregates, vertical-slice features, EF, wire-up.
+- `tests/Pam.<Module>.UnitTests` — aggregate + validator unit tests.
+
+Wire-up via a static `<Module>Module` class exposing
+`AddXModule(IServiceCollection, IConfiguration)` and
+`UseXModuleAsync(IServiceProvider)`. Schema-per-module + snake_case
+naming + explicit health probe. Interceptors registered per-module via
+`TryAddScoped` so multiple modules don't conflict.
+
+**Consequences.**
+- New-module cost is low; copy `Pam.Operators` and rename.
+- `NetArchTest.Rules` (pinned in catalog, wiring deferred) can enforce
+  the boundary contract once a second module exists.
+- `Pam.Operators` is the canonical reference. Diverging from this
+  pattern requires a new ADR.
+
+---
+
+## 18. Snake_case columns via EFCore.NamingConventions — 2026-05-07
+
+**Context.** EF Core defaults to PascalCase column names matching C#
+property names. PostgreSQL idiom is snake_case; the peer
+`pro-cr-billing` project uses snake_case throughout. Inconsistency
+between case styles in the same project is a smell, and retrofitting
+once N modules ship is N migrations.
+
+**Decision.** Add `EFCore.NamingConventions` 10.0.0 to the central
+catalog. Every module DbContext applies
+`options.UseSnakeCaseNamingConvention()` on **both** the runtime DI
+registration and the design-time factory. Without it on the design-time
+side, `dotnet ef migrations add` scaffolds PascalCase column names that
+disagree with runtime queries.
+
+**Consequences.**
+- DB tables read naturally from `psql`. Column names match Postgres
+  conventions and tooling.
+- Established before Phase 3 to avoid renaming Identity + OpenIddict
+  schemas later.
+
+---
+
+## 17. Operators-first module ordering; Players deferred — 2026-05-06
+
+**Context.** The original sequencing was Players first (with a hardcoded
+`IBrandRegistry`), then Operators promotion, then KYC/Wallet/etc. After
+the ZITADEL drop (#16), the dependency graph looked wrong:
+back-office Identity is needed before any module can be admin-managed,
+and Brand is the multi-tenant foundation that every other aggregate
+references. Putting Players first meant baking in a brand abstraction
+layer twice (once as a hardcoded shim, once as the real thing) and
+rewriting the existing Player-Brand wiring later.
+
+**Decision.** New module sequence: **Operators → Identity → Players →
+Wallet → KYC → Limits → Bonuses → Bets → Affiliates → Notifications →
+Reporting → Audit**. Phase 1 deleted the existing `Pam.Players` module
+and its tests entirely; Phase 2 shipped `Pam.Operators` with the
+`Brand` aggregate; Phase 3 is `Pam.Identity` (back-office Users &
+Agents). Players gets re-introduced as the fourth module, now properly
+scoped under a `Brand` and authenticated via the embedded IDP.
+
+**Consequences.**
+- ~2200 lines of Players + ZITADEL scaffolding deleted (commit
+  `2a90022`); not lost — every pattern worth keeping was either already
+  in `Pam.Shared` or is being rebuilt cleanly.
+- Memory file `project_phase1_pivot.md` captures the rationale and the
+  patterns the next phase inherits.
+
+---
+
+## 16. Drop ZITADEL; embed OpenIddict + ASP.NET Core Identity — 2026-05-06
+
+**Context.** Decisions #4 and #12 picked Keycloak then ZITADEL as the
+external IDP. The company's stronger requirement is sovereignty over
+the auth code path — "we want to own the entire codebase." External
+IDPs introduce: (a) a separate process to operate, (b) a second DB to
+back up and migrate, (c) a release cadence we don't control, (d)
+cross-process domain leakage (Brand↔ZITADEL Org sync).
+
+**Decision.** Replace ZITADEL with **OpenIddict + ASP.NET Core
+Identity**, both embedded as NuGet packages in `Pam.Identity` (Phase 3).
+- OpenIddict (MIT) issues OAuth 2.0 / OIDC tokens. Authorization Code +
+  PKCE + Refresh for the back-office SPA; client_credentials
+  pre-enabled for future module extraction.
+- ASP.NET Core Identity owns user storage, password hashing, lockout,
+  email confirmation, MFA. Both stacks share `IdentityDbContext` in
+  schema `identity`.
+- `BackOfficeUser : IdentityUser<Guid>` carries `BrandId`. Player
+  authentication is deferred to when the Players module returns; design
+  intent is a distinct flow within the same OpenIddict server (likely a
+  separate scope set).
+- Phase 1 deletes everything ZITADEL: `infra/zitadel/`, the three
+  ZITADEL services from `docker-compose.yml`, all `Zitadel.*` package
+  refs, the `IIdentityProvider` ZITADEL implementation,
+  `BrandRegistry`, `IBrandRegistry`, and the related Players-module
+  scaffolding. Phase 3 brings auth back via OpenIddict.
+
+**Consequences.**
+- Single process, single DB, MIT/Apache-2.0 source we ship in our
+  binary. If the maintainer disappears we keep building.
+- More code we own (custom `/connect/authorize` + `/connect/token`
+  controllers; permissions seeder; cert rotation). Bounded; documented
+  in `project_phase1_pivot.md`.
+- Supersedes #4, #12, #15.
+
+---
+
 ## 15. ZITADEL bootstrap as `IHostedService`, not a shell script — 2026-05-06
+
+**Status: superseded by #16.**
+
+
 
 **Context.** Decision #12 introduced ZITADEL with a bash + curl + python3
 bootstrap script that read the admin PAT from a Docker volume, then made

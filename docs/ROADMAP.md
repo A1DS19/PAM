@@ -4,189 +4,202 @@ What's deferred and the trigger that should bring each forward.
 
 ## Up next — ordered punch-list
 
-The four items below are the immediate path forward, in order. Each links
-to a detail section further down for the *what* and *why deferred*.
+The current focus is Phase 3, then Players returns. Each item links to a
+detail section further down for the *what* and *why deferred*.
 
-1. **Test gate before module #2** — outbox + integration tests
-   (Testcontainers: real Postgres + real ZITADEL) + arch tests
-   (`NetArchTest.Rules`). See [Outbox](#outbox--transactional-integration-event-publishing)
-   and [Tests](#tests).
-2. **Promote `IBrandRegistry` to a real `Pam.Operators` module** —
-   Brand + Jurisdiction policy registry, persisted, replacing the
-   hardcoded options-bound dictionary. See
-   [`Pam.Operators` promotion](#pamoperators-promotion-brand--jurisdiction-registry).
-3. **Module #2 — KYC** (or Wallet first if the regulatory trigger says
-   so). See the *Modules not yet built* section.
-4. **Legacy `gbs-db` cutover plan** — strangler-fig design *before* any
-   PAM module starts replacing production reads/writes. See
-   [Legacy gbs-db cutover](#legacy-gbs-db-cutover-plan).
+1. **Phase 3 — `Pam.Identity` (OpenIddict + ASP.NET Core Identity).**
+   Embedded OAuth 2.0 / OIDC server, back-office Users & Agents, roles +
+   permissions. See [`Pam.Identity`](#pamidentity-openiddict--aspnet-core-identity)
+   below and ADR #16.
+2. **Re-introduce `Pam.Players`** (now as module #3 under the new
+   ordering). Player aggregate scoped under a `Brand`, authenticated via
+   the embedded IDP issued in Phase 3. KYC + sessions + limits land as
+   sub-aggregates of the same module.
+3. **Test gate before module #4** — outbox + integration tests
+   (Testcontainers: real Postgres) + arch tests (`NetArchTest.Rules`).
+   See [Outbox](#outbox--transactional-integration-event-publishing) and
+   [Tests](#tests).
+4. **Module #4 — `Pam.Wallet`** (double-entry ledger). Outbox is
+   non-negotiable from day one of that module. See
+   [the build order](#modules-not-yet-built) below.
 
 ## Deferred — pinned, will land when triggered
 
+### `Pam.Identity` (OpenIddict + ASP.NET Core Identity)
+
+- **What**: embedded auth module. OpenIddict `AddServer` configured for
+  Authorization Code + PKCE + Refresh + ClientCredentials. ASP.NET
+  Identity for `BackOfficeUser`, roles, permissions. Single
+  `IdentityDbContext` (schema `identity`) hosting both Identity and
+  OpenIddict tables.
+- **Public surface**: `/connect/authorize`, `/connect/token`,
+  `/connect/userinfo`, plus CRUD endpoints for users / roles /
+  permissions (back-office only, gated on `operator.admin` permission).
+- **Validation**: `AddValidation().UseLocalServer()` in the same host so
+  module endpoints validate tokens in-process. No external introspection
+  hop.
+- **Trigger**: now (Phase 3). Without back-office auth there's no way
+  for a human to act on Brands or any future module.
+- **Reference patterns**: pro-cr-billing's `User : IdentityUser<Guid>`
+  shape, password policy, lockout, refresh-token rotation —
+  OpenIddict's token storage replaces the hand-rolled pieces.
+
 ### Outbox + transactional integration-event publishing
-- **What**: MassTransit EF Core outbox on `PlayersDbContext`; flip
-  `PlayerRegisteredDomainHandler` to publish `PlayerRegisteredIntegrationEvent`.
-- **Trigger**: first cross-module consumer (Audit or Notifications module).
-- **Why deferred**: no consumers yet, and direct publish without outbox would
-  be inconsistent (event sent but DB write rolled back).
+
+- **What**: MassTransit EF Core outbox on the publishing module's
+  DbContext; flip the relevant `<Event>DomainHandler` to publish the
+  integration event through the outbox.
+- **Trigger**: first cross-module consumer (Audit, Notifications, or
+  any module reacting to `BrandCreatedIntegrationEvent`).
+- **Why deferred**: no consumers yet, and direct publish without outbox
+  would be inconsistent (event sent but DB write rolled back).
 - **For Wallet, this is non-negotiable on day one of that module.**
 
 ### Audit module
-- **What**: `Pam.Audits` module, append-only, subscribes to all integration
-  events. Records actor, IP, correlation-id, raw event payload.
-- **Trigger**: regulator asks, or first jurisdiction we operate in requires
-  it (most do).
+
+- **What**: `Pam.Audits` module, append-only, subscribes to all
+  integration events. Records actor, IP, correlation-id, raw event
+  payload with hash chaining.
+- **Trigger**: regulator asks, or first jurisdiction we operate in
+  requires it (most do).
 - **Note**: this is **regulatory** audit. Application audit (the
-  `(CreatedByType, CreatedById, LastModifiedByType, LastModifiedById)`
-  columns on every `Entity<TId>`) already covers app-level "who did
-  what."
+  `created_by_type / created_by_id / last_modified_*` columns on every
+  `Entity<TId>`) already covers app-level "who did what."
 
-### `Pam.Operators` promotion (Brand + Jurisdiction registry)
-- **What**: replace the hardcoded options-bound `IBrandRegistry` (and the
-  startup `ZitadelBootstrapService`'s ensure-orgs path) with a real
-  module. Tables: `brands` (id, code, name, default_currency,
-  default_language, license refs, branding metadata), `jurisdictions`
-  (code, min_age, kyc_tier_matrix, allowed_currencies, RG defaults),
-  `brand_jurisdictions` (M-to-N: which brand operates under which
-  licenses). Admin endpoints (gated on operator audience) for CRUD.
-  Player aggregate keeps its `BrandId` foreign reference.
-- **Trigger**: before module #2 ships. Adding a new jurisdiction or
-  brand without a real registry means hardcoded changes in N modules.
-- **Note**: ZITADEL Org per Brand stays — the Brand registry holds the
-  ZITADEL Org id alongside the Brand record.
+### Brand-scoped global query filters
 
-### Operators audience + admin endpoints
-- **What**: second `JwtBearer` scheme in `Pam.Api` validating tokens issued
-  by a dedicated ZITADEL audience for back-office traffic. `Operator.*`
-  policies for back-office actions (`SuspendPlayer`, `SearchPlayers`, etc.).
-  Admin UI (BlazorServer or React) bound to that audience.
-- **Trigger**: customer support team needs to act on accounts.
-- **Setup**: extend `ZitadelBootstrapService` to also create an operators
-  Project + audience under a dedicated Org (or under each brand Org,
-  depending on the back-office shape). Add a second `AddJwtBearer("operators",
-  ...)` block in `Program.cs`. Define `operator.support` /
-  `operator.compliance` / `operator.admin` roles via ZITADEL roles or
-  authorization grants.
+- **What**: each `DbContext` adds an EF Core global query filter on
+  `BrandId` so cross-brand reads are impossible by default once
+  back-office endpoints arrive. Operator endpoints can elevate to
+  cross-brand access via a specific permission
+  (`operator.platform-admin`).
+- **Trigger**: when the second brand-scoped aggregate (Player) lands.
+  Adding the filter retroactively across N modules is N migrations and
+  N code reviews; doing it once at module-#3-start is one PR.
 
-### Legacy gbs-db cutover plan
+### Distributed rate limiter
+
+- **What**: replace the in-memory `auth-sensitive` policy with a
+  Redis-backed one (`RedisRateLimiting` package or similar).
+- **Trigger**: running multiple Pam.Api replicas. Until then the
+  in-memory limiter is enough — the embedded OpenIddict server's
+  brute-force protection layers on top.
+
+### OTLP exporter + collector
+
+- **What**: add `.AddOtlpExporter()` on the OTel tracing/metrics
+  builders; add an OpenTelemetry Collector to compose; route to
+  Tempo/Loki/Prometheus.
+- **Trigger**: production, or first time you need to debug a
+  multi-service flow. Until then, instrumentation is collected and
+  discarded.
+
+### CorrelationId middleware
+
+- **What**: explicit `X-Correlation-Id` middleware that flows through
+  MediatR + outbox + MassTransit headers.
+- **Trigger**: the first cross-process flow that needs to be replayed
+  for debugging. OTel `traceparent` covers HTTP↔HTTP today;
+  CorrelationId is needed when async outbox flows span multiple traces.
+
+### Architecture tests
+
+- **What**: `NetArchTest.Rules` test project (or a small project at the
+  repo root) enforcing the per-module boundary: a `Pam.<X>` project
+  cannot reference a `Pam.<Y>` project directly (only `*.Contracts`).
+- **Trigger**: as soon as a second non-Identity module exists. Without
+  enforcement the rule rots within a few PRs.
+
+### Production secret store
+
+- **Status**: env-var-driven. Orchestrator (systemd / k3s / Swarm)
+  injects secrets as env vars; ASP.NET maps `__` → `:` over
+  `appsettings.{env}.json`. No in-process secret-fetching code.
+- **Open**: pick a dedicated secret store when there's a real
+  production deploy target. Candidates: HashiCorp Vault (most flexible,
+  heaviest ops), SOPS + age (file-based, GitOps-friendly, no server),
+  k3s External Secrets (cleanest if we land on k3s).
+- **Trigger**: first staging or production environment that needs more
+  than orchestrator-managed env vars (rotation, audit, fine-grained
+  access controls, multi-team isolation).
+
+### Tests
+
+- **Done**: unit tests for `Pam.Operators` (Brand aggregate behavior +
+  CreateBrand validator) on xUnit 3 + FluentAssertions 7. 18 tests,
+  ~80ms run.
+- **What's left**: integration tests with Testcontainers (real Postgres,
+  real RabbitMQ) for the create-brand flow end-to-end; architecture
+  tests via `NetArchTest.Rules` for module-boundary enforcement.
+- **Trigger**: before module #4 (Wallet) lands. Architecture tests in
+  particular pay for themselves the moment a second module makes it
+  possible to cross-reference internal types — which is exactly when
+  Identity ships.
+
+### Legacy `gbs-db` cutover plan
+
 - **What**: a written strangler-fig design covering (a) which endpoints
   route to new PAM vs legacy `GBS-BAS`; (b) data sync direction during
-  cutover (one-way pull from gbs-db into PAM, or dual-write); (c)
+  cutover (one-way pull from `gbs-db` into PAM, or dual-write); (c)
   reconciliation strategy for balances/state that exist in both stores
   during overlap; (d) rollback story per cutover slice.
 - **Trigger**: before any PAM module starts owning reads/writes for
   data that production currently serves from `gbs-db`. The 100k
   existing players, 357 tables, and 1,901 stored procs are a real
   migration project, not an afterthought.
-- **Out-of-scope until then**: the POC's per-Brand Player records
-  (decision #14) deliberately diverge from `gbs-db`'s pattern (a) — the
-  cutover plan is where "split the legacy single row into per-brand
-  rows" gets concrete.
 
-### Distributed rate limiter
-- **What**: replace the in-memory `auth-sensitive` policy with a Redis-backed
-  one (`RedisRateLimiting` package or similar).
-- **Trigger**: running multiple Pam.Api replicas. Until then, the in-memory
-  limiter stacked with ZITADEL's brute-force protection is enough.
+## Modules not yet built
 
-### OTLP exporter + collector
-- **What**: add `.AddOtlpExporter()` on the OTel tracing/metrics builders;
-  add an OpenTelemetry Collector to compose; route to Tempo/Loki/Prometheus.
-- **Trigger**: production, or first time you need to debug a multi-service
-  flow. Until then, instrumentation is collected and discarded.
+In dependency / priority order:
 
-### Reconciliation job for orphan ZITADEL users
-- **What**: nightly job that lists ZITADEL users (per brand Org) with no
-  matching PAM player and either deletes them or pages support.
-- **Trigger**: when registration volume is non-trivial. The current
-  best-effort `DeleteUserAsync` rollback in `RegisterPlayerHandler` covers
-  the common case but has a tiny window where both the DB save and the
-  ZITADEL delete can fail.
+1. **`Pam.Identity`** (Phase 3, in flight) — back-office Users &
+   Agents, OpenIddict, roles + permissions.
+2. **`Pam.Players`** — Player aggregate scoped under a Brand. KYC,
+   sessions, limits land as sub-aggregates of this module to start;
+   spin out as separate modules when the surface justifies it.
+3. **`Pam.Wallet`** — double-entry ledger, deposits, withdrawals,
+   holds, balance projections. Outbox required from day one. Most
+   regulated module.
+4. **`Pam.Limits`** (if not already inside Players) — deposit / loss /
+   session limits, cooling-off, self-exclusion. Hooks into the MediatR
+   pipeline as a `LimitsBehavior` so any `IPlayerInitiated` command is
+   checked before the handler.
+5. **`Pam.Bonuses`** — grants, wagering progress, expiry. Subscribes to
+   wallet events. Bonus engine via a typed expression DSL (see
+   CORE_PLATFORM_MAPPING.md decision #3).
+6. **`Pam.Bets`** — internet bets + bet shops; Wallet + GameCatalog
+   dependencies.
+7. **`Pam.GameProviders` / `Pam.GameCatalog`** — provider integrations,
+   product catalog.
+8. **`Pam.Affiliates`** — own admin panel, commissions, referral
+   tracking.
+9. **`Pam.Notifications`** — email/SMS/push. Subscribes to
+   Player/KYC/Wallet events.
+10. **`Pam.Reporting`** — read-side projections over events; can be
+    incrementally added.
+11. **`Pam.Audits`** — append-only, subscribes to everything (see
+    above).
 
-### IDP → PAM lifecycle sync (ZITADEL Actions webhook)
-- **What**: ZITADEL Actions v2 fires a webhook on `user.removed` /
-  `user.deactivated`; PAM exposes `POST /v1/webhooks/zitadel/user-removed`
-  which verifies an HMAC signature + replay window, looks up the player
-  by `IdentityProviderId`, and calls `Player.Close(reason: "idp-removed")`.
-  Soft-close only (status → `Closed`), never `DELETE` — regulatory
-  retention requires keeping player history for years after account close.
-  Hard erasure is a separate GDPR-driven anonymization flow.
-- **Why we don't auto-cascade today**: PAM is the canonical record for
-  regulatory data; admin actions in the ZITADEL console are out-of-band
-  and shouldn't silently mutate PAM state. The intended prod model is
-  **wrap-only**: admins use PAM's admin UI, which calls ZITADEL under the
-  covers (single source of truth, no sync problem to solve). The webhook
-  is belt-and-suspenders for drift, not the primary mechanism.
-- **Trigger**: before the back-office admin UI ships, or sooner if
-  someone wants to use the ZITADEL console as a player-ops tool in dev.
-- **Local dev wiring**: `make zitadel-actions-setup` target idempotently
-  creates the Action target (`http://host.docker.internal:5000/v1/webhooks/zitadel/user-removed`)
-  and execution binding via the Admin API; HMAC secret lives in
-  `Zitadel:WebhookSecret`. Action v2 is GA in ZITADEL v2.50+ — `latest`
-  has it.
-- **Rough scope**: ~6 files —  `Player.Close()` aggregate method +
-  `PlayerClosedDomainEvent`, the webhook endpoint with signature/timestamp
-  verification, the `ClosePlayerByIdpId` command + handler, an integration
-  event for downstream modules, and the `make` setup target.
+Game wallet ingress (`Pam.GameWallet`) is a **separate host**, not a
+module. Game providers hit it with HMAC-signed `/auth`, `/bet`, `/win`,
+`/rollback` calls; latency budget is sub-200ms p99. It calls into
+`Pam.Wallet` via the contracts interface but does not share the
+back-office API request pipeline.
 
-### CorrelationId middleware
-- **What**: explicit `X-Correlation-Id` middleware that flows through
-  MediatR + outbox + MassTransit headers.
-- **Trigger**: the first cross-process flow that needs to be replayed for
-  debugging. OTel `traceparent` covers HTTP↔HTTP today; CorrelationId is
-  needed when async outbox flows span multiple traces.
-
-### Production secret store
-- **Status**: env-var-driven. Orchestrator (systemd / k3s / Swarm) injects
-  secrets as env vars; ASP.NET maps `__` → `:` over `appsettings.{env}.json`.
-  No in-process secret-fetching code. (An Infisical prototype was removed
-  in `3b4d6e9` — see commit message.)
-- **Open**: pick a dedicated secret store when there's a real production
-  deploy target. Candidates: HashiCorp Vault (most flexible, heaviest ops),
-  SOPS + age (file-based, GitOps-friendly, no server), k3s External Secrets
-  (cleanest if we land on k3s).
-- **Trigger**: first staging or production environment that needs more
-  than orchestrator-managed env vars (rotation, audit, fine-grained access
-  controls, multi-team isolation).
-
-### Tests
-- **Done**: pure-domain unit tests in `tests/Pam.Players.UnitTests/`
-  covering `Player.Register` (age boundaries, brand carry-through, event
-  raising) and the four value objects, on xUnit 3 + FluentAssertions 7.
-- **What's left**: integration tests with Testcontainers (real Postgres,
-  real ZITADEL) for the registration flow end-to-end; architecture tests
-  via `NetArchTest.Rules` for module-boundary enforcement.
-- **Trigger**: before module #2 lands. Architecture tests in particular
-  pay for themselves the moment a second module makes it possible to
-  cross-reference internal types.
-
-## Smoke-test caveats found and tracked
+## Smoke-test caveats
 
 ### Redis + Seq compose port conflicts
+
 `docker-compose.yml` declares both, but they default to standard ports
-(`6379`, `5341`) which conflict with the user's `dmt-redis` and `dmt-seq`
-peer-project containers. Decide whether to renumber ours or stop the others
-when the API actually needs them (Redis: distributed rate limiting; Seq:
-log viewing).
+(`6379`, `5341`) which conflict with the user's `dmt-redis` and
+`dmt-seq` peer-project containers. Decide whether to renumber ours or
+stop the others when the API actually needs them (Redis: distributed
+rate limiting; Seq: log viewing).
 
-## Modules not yet built (initial cut from architecture discussion)
+### `mprocs.log` and `dotnet watch`
 
-In priority order for a regulated sportsbook/casino PAM:
-
-1. **Kyc** — verification state machine, document review, status transitions
-   driving Player status. Needed before any real-money flow.
-2. **Wallet** — double-entry ledger, deposits, withdrawals, holds, balance
-   projections. Outbox required from day one. Most regulated module.
-3. **Limits** — deposit/loss/session limits, cooling-off, self-exclusion. Hooks
-   into the MediatR pipeline as a `LimitsBehavior` so any
-   `IPlayerInitiated` command is checked before the handler.
-4. **Bonus** — grants, wagering progress, expiry. Subscribes to wallet events.
-5. **Notifications** — email/SMS/push. Subscribes to Player/KYC/Wallet events.
-6. **Operator** — back-office user management (when the operator audience
-   and admin endpoints land).
-7. **Audit** — append-only, subscribes to everything (see above).
-
-Game wallet ingress (`Pam.GameWallet`) is a **separate host**, not a module.
-Game providers hit it with HMAC-signed `/auth`, `/bet`, `/win`, `/rollback`
-calls; latency budget is sub-200ms p99. It calls into `Pam.Wallets` via the
-contracts interface but does not share the player-API request pipeline.
+If `mprocs` writes its log into the project tree, `dotnet watch` may
+treat that log as a file change and trigger a hot reload loop. Exclude
+the log file from watch via `<Watch Remove="…/mprocs.log" />` in
+`Directory.Build.props` or the Pam.Api csproj when this becomes
+annoying.
