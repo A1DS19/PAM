@@ -1,26 +1,17 @@
 using System.Threading.RateLimiting;
 using Carter;
-using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
-using Pam.Api.Security;
-using Pam.Players;
+using Pam.Operators;
 using Pam.Shared.Exceptions.Handlers;
 using Pam.Shared.Extensions;
 using Pam.Shared.Messaging.Extensions;
-using Pam.Shared.Security;
 using Scalar.AspNetCore;
 using Serilog;
-
-// gRPC over plaintext HTTP/2 — required for the local ZITADEL container which
-// runs without TLS (ZITADEL_TLS_ENABLED=false in docker-compose). The switch
-// is harmless when the endpoint is HTTPS; production should still terminate
-// TLS in front of ZITADEL.
-AppContext.SetSwitch("System.Net.Http.SocketsHttpHandler.Http2UnencryptedSupport", true);
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -38,16 +29,15 @@ builder.Host.UseSerilog(
             .Enrich.WithProperty("env", ctx.HostingEnvironment.EnvironmentName)
 );
 
-var moduleAssemblies = new[] { typeof(PlayersModule).Assembly };
+var moduleAssemblies = new[] { typeof(OperatorsModule).Assembly };
 
 builder.Services.AddPamShared();
 builder.Services.AddPamMediatR(moduleAssemblies);
 builder.Services.AddPamMassTransit(builder.Configuration);
 
 builder.Services.AddHttpContextAccessor();
-builder.Services.AddScoped<IUserContext, HttpUserContext>();
 
-builder.Services.AddPlayersModule(builder.Configuration);
+builder.Services.AddOperatorsModule(builder.Configuration);
 
 builder.Services.AddCarter(new DependencyContextAssemblyCatalog(moduleAssemblies));
 builder.Services.AddOpenApi();
@@ -78,36 +68,6 @@ builder.Services.AddProblemDetails(options =>
     };
 });
 
-var zitadelAuthority =
-    builder.Configuration["Zitadel:Authority"]?.TrimEnd('/')
-    ?? throw new InvalidOperationException("Zitadel:Authority is not configured");
-var zitadelAudience =
-    builder.Configuration["Zitadel:Audience"]
-    ?? throw new InvalidOperationException("Zitadel:Audience is not configured");
-
-builder
-    .Services.AddAuthentication()
-    .AddJwtBearer(
-        "players",
-        o =>
-        {
-            o.Authority = zitadelAuthority;
-            o.Audience = zitadelAudience;
-            o.RequireHttpsMetadata = !builder.Environment.IsDevelopment();
-        }
-    );
-
-builder.Services.AddAuthorization(opt =>
-{
-    opt.AddPolicy("Player", p => p.AddAuthenticationSchemes("players").RequireAuthenticatedUser());
-
-    // Fallback denies anonymous on any endpoint that does not opt in to
-    // .AllowAnonymous(). Forces public endpoints to be explicit.
-    opt.FallbackPolicy = new AuthorizationPolicyBuilder("players")
-        .RequireAuthenticatedUser()
-        .Build();
-});
-
 // Trust proxy headers so RemoteIpAddress / scheme reflect the real client
 // when behind a load balancer or ingress. KnownProxies/Networks must be set
 // in production via configuration; cleared here so dev runs see the actual
@@ -127,8 +87,7 @@ builder.Services.AddRateLimiter(o =>
     {
         // Prefer authenticated identity; fall back to forwarded client IP.
         // UseForwardedHeaders runs before this, so RemoteIpAddress reflects
-        // X-Forwarded-For when configured. The IDP-issued `sub` is unique
-        // per user across brands.
+        // X-Forwarded-For when configured.
         var sub = ctx.User.FindFirst("sub")?.Value;
         if (!string.IsNullOrEmpty(sub))
         {
@@ -228,8 +187,6 @@ app.UseForwardedHeaders();
 app.UseSerilogRequestLogging();
 app.UseExceptionHandler();
 app.UseRateLimiter();
-app.UseAuthentication();
-app.UseAuthorization();
 app.MapCarter();
 
 if (app.Environment.IsDevelopment())
@@ -247,14 +204,14 @@ app.MapHealthChecks(
     )
     .AllowAnonymous();
 app.MapHealthChecks(
-        "/health/players",
+        "/health/operators",
         new HealthCheckOptions
         {
-            Predicate = h => h.Tags.Contains("module:player", StringComparer.Ordinal),
+            Predicate = h => h.Tags.Contains("module:operators", StringComparer.Ordinal),
         }
     )
     .AllowAnonymous();
 
-app.UsePlayersModule();
+await app.Services.UseOperatorsModuleAsync();
 
 await app.RunAsync();

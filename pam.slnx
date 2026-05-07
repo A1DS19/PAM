@@ -4,9 +4,9 @@
     <Project Path="src/Bootstrapper/Pam.Api/Pam.Api.csproj" />
   </Folder>
   <Folder Name="/src/Modules/" />
-  <Folder Name="/src/Modules/Players/">
-    <Project Path="src/Modules/Players/Pam.Players.Contracts/Pam.Players.Contracts.csproj" />
-    <Project Path="src/Modules/Players/Pam.Players/Pam.Players.csproj" />
+  <Folder Name="/src/Modules/Operators/">
+    <Project Path="src/Modules/Operators/Pam.Operators.Contracts/Pam.Operators.Contracts.csproj" />
+    <Project Path="src/Modules/Operators/Pam.Operators/Pam.Operators.csproj" />
   </Folder>
   <Folder Name="/src/Shared/">
     <Project Path="src/Shared/Pam.Shared.Contracts/Pam.Shared.Contracts.csproj" />
@@ -14,6 +14,6 @@
     <Project Path="src/Shared/Pam.Shared/Pam.Shared.csproj" />
   </Folder>
   <Folder Name="/tests/">
-    <Project Path="tests/Pam.Players.UnitTests/Pam.Players.UnitTests.csproj" />
+    <Project Path="tests/Pam.Operators.UnitTests/Pam.Operators.UnitTests.csproj" />
   </Folder>
 </Solution>

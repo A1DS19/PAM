@@ -6,7 +6,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\Modules\Players\Pam.Players\Pam.Players.csproj" />
+    <ProjectReference Include="..\..\Modules\Operators\Pam.Operators\Pam.Operators.csproj" />
     <ProjectReference Include="..\..\Shared\Pam.Shared\Pam.Shared.csproj" />
     <ProjectReference Include="..\..\Shared\Pam.Shared.Messaging\Pam.Shared.Messaging.csproj" />
   </ItemGroup>
@@ -15,6 +15,10 @@
     <PackageReference Include="Carter" />
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
     <PackageReference Include="Scalar.AspNetCore" />
 
     <PackageReference Include="Serilog.AspNetCore" />
