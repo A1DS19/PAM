@@ -222,6 +222,106 @@ A handler inside the module bridges the two: e.g.
 `Pam.Operators.Contracts`) via MassTransit's `IPublishEndpoint`. The
 integration event preserves the original `EventId` and `OccurredAt`.
 
+### Integration events describe what happened, not what to do
+
+Single most important rule for shaping an integration event. The publisher
+broadcasts a fact (`UserLoggedIn`, `PlayerRegistered`, `BetSettled`).
+Subscribers decide what to do with it.
+
+The trap is publishing a "command-shaped" event:
+
+```csharp
+// WRONG — this is RPC dressed up as an event
+public sealed record SendEmailIntegrationEvent(
+    string To, string Subject, string Body
+) : IntegrationEvent;
+```
+
+That couples the publisher to:
+- the recipient's email + locale (whose data?)
+- the email body wording (whose template?)
+- whether to send at all (whose policy?)
+- per-brand branding (where does it live?)
+
+…and it leaks PII through every queue and audit log it touches.
+
+```csharp
+// RIGHT — describe the fact, leave the action to subscribers
+public sealed record UserLoggedInIntegrationEvent(
+    Guid UserId,
+    string IpAddress,
+    string UserAgent,
+    string? DeviceFingerprint
+) : IntegrationEvent;
+```
+
+`Pam.Notifications` (when it ships) subscribes, queries Identity for the
+user's contact + locale, decides if the login warrants an email, renders
+the template, and only *then* enqueues a send-email job. The publisher
+stays ignorant of all that.
+
+### Integration events vs job queues — both ride RabbitMQ
+
+Two different patterns, both transported by MassTransit/RabbitMQ.
+
+|  | Integration event | Job queue |
+|---|---|---|
+| Question | "What happened?" | "When can this work run?" |
+| Producer | Notifies the world | Schedules work |
+| Consumers | Many — fan-out broadcast | One worker per job |
+| Caller waits? | No (fire-and-forget) | Sometimes (poll for status) |
+| Retry/scheduling? | Optional | Core feature |
+| Coupling | Decouples *modules* from each other | Decouples *time of request* from *time of work* |
+
+A typical flow chains them:
+
+```
+1. POST /v1/identity/login                 (synchronous, ~50ms)
+   ├── validate, sign in, set cookie
+   ├── publish UserLoggedInIntegrationEvent
+   └── return 204
+                                           (RabbitMQ exchange)
+                                                  ↓
+2. Pam.Notifications.UserLoggedInConsumer  (cross-module subscriber)
+   ├── query Identity for user contact + locale
+   ├── apply policy ("first IP this week? new device?")
+   ├── render template
+   └── enqueue SendEmail job
+                                           (RabbitMQ queue)
+                                                  ↓
+3. EmailSender worker                      (internal job consumer)
+   ├── call SES / SendGrid / SMTP
+   ├── retry on failure with exponential backoff
+   └── dead-letter after N failures
+```
+
+Step 1 is synchronous — the user is waiting. Step 2 is the integration
+event (decouple modules). Step 3 is the job queue (decouple work from
+time, with retries). Three concerns, one broker.
+
+### What gets queued vs what stays synchronous
+
+Rule of thumb: anything where the user is waiting for the result of a
+*decision* runs synchronously. Anything that's a side effect of that
+decision runs async.
+
+| Operation | Pattern | Why |
+|---|---|---|
+| `POST /login` | Synchronous | User waiting; cookie in response |
+| `POST /register` | Synchronous | Validation must reject immediately |
+| `POST /reset-password` | Synchronous | Validation + token; returns 200 |
+| Sending the welcome email | Queued | SMTP can fail; needs retries |
+| Sending an SMS via Twilio | Queued | Rate-limited downstream API |
+| Webhook to a game provider | Queued | Retry until 200 or dead-letter |
+| Bulk-importing players from `gbs-db` | Queued | Long-running |
+| Generating a daily revenue report | Queued | Heavy aggregation |
+| Real-time bet placement | Synchronous | <50ms latency budget |
+
+Returning 202 Accepted with a job id is occasionally the right call —
+mostly for genuinely long-running operations the user explicitly
+initiated (a CSV import). It's almost never the right call for a user
+action with a yes/no decision behind it.
+
 ## Aggregate sizing rules
 
 Three rules, repeat in code review:

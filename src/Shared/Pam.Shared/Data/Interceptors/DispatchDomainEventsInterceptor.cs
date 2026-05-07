@@ -15,7 +15,8 @@ public sealed class DispatchDomainEventsInterceptor(IPublisher publisher) : Save
     public override async ValueTask<int> SavedChangesAsync(
         SaveChangesCompletedEventData eventData,
         int result,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default
+    )
     {
         if (eventData.Context is not null)
         {
@@ -28,8 +29,8 @@ public sealed class DispatchDomainEventsInterceptor(IPublisher publisher) : Save
     {
         for (var generation = 0; generation < MaxGenerations; generation++)
         {
-            var aggregates = context.ChangeTracker
-                .Entries<IAggregate>()
+            var aggregates = context
+                .ChangeTracker.Entries<IAggregate>()
                 .Where(e => e.Entity.DomainEvents.Count > 0)
                 .Select(e => e.Entity)
                 .ToList();
@@ -44,11 +45,11 @@ public sealed class DispatchDomainEventsInterceptor(IPublisher publisher) : Save
                 var events = aggregate.ClearDomainEvents();
                 foreach (var domainEvent in events)
                 {
-                    var notificationType = typeof(DomainEventNotification<>)
-                        .MakeGenericType(domainEvent.GetType());
-                    var notification = (INotification)Activator.CreateInstance(
-                        notificationType,
-                        domainEvent)!;
+                    var notificationType = typeof(DomainEventNotification<>).MakeGenericType(
+                        domainEvent.GetType()
+                    );
+                    var notification = (INotification)
+                        Activator.CreateInstance(notificationType, domainEvent)!;
                     await publisher.Publish(notification, ct);
                 }
             }
@@ -58,6 +59,7 @@ public sealed class DispatchDomainEventsInterceptor(IPublisher publisher) : Save
         // certainly a bug — call it out instead of silently looping.
         throw new InvalidOperationException(
             $"Domain-event dispatch exceeded {MaxGenerations} generations. "
-            + "A handler is repeatedly raising new events on tracked aggregates.");
+                + "A handler is repeatedly raising new events on tracked aggregates."
+        );
     }
 }
