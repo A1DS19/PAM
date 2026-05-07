@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.RateLimiting;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using Pam.Operators;
 using Pam.Shared.Exceptions.Handlers;
 using Pam.Shared.Extensions;
 using Pam.Shared.Messaging.Extensions;
@@ -28,13 +29,17 @@ builder.Host.UseSerilog(
             .Enrich.WithProperty("env", ctx.HostingEnvironment.EnvironmentName)
 );
 
+var moduleAssemblies = new[] { typeof(OperatorsModule).Assembly };
+
 builder.Services.AddPamShared();
-builder.Services.AddPamMediatR();
+builder.Services.AddPamMediatR(moduleAssemblies);
 builder.Services.AddPamMassTransit(builder.Configuration);
 
 builder.Services.AddHttpContextAccessor();
 
-builder.Services.AddCarter();
+builder.Services.AddOperatorsModule(builder.Configuration);
+
+builder.Services.AddCarter(new DependencyContextAssemblyCatalog(moduleAssemblies));
 builder.Services.AddOpenApi();
 builder.Services.AddExceptionHandler<CustomExceptionHandler>();
 
@@ -198,5 +203,15 @@ app.MapHealthChecks(
         new HealthCheckOptions { Predicate = h => h.Tags.Contains("ready", StringComparer.Ordinal) }
     )
     .AllowAnonymous();
+app.MapHealthChecks(
+        "/health/operators",
+        new HealthCheckOptions
+        {
+            Predicate = h => h.Tags.Contains("module:operators", StringComparer.Ordinal),
+        }
+    )
+    .AllowAnonymous();
+
+await app.Services.UseOperatorsModuleAsync();
 
 await app.RunAsync();
