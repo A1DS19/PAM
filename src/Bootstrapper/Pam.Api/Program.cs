@@ -1,11 +1,15 @@
 using System.Threading.RateLimiting;
 using Carter;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
+using OpenIddict.Validation.AspNetCore;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using Pam.Identity;
+using Pam.Identity.Contracts.Permissions;
 using Pam.Operators;
 using Pam.Shared.Exceptions.Handlers;
 using Pam.Shared.Extensions;
@@ -29,7 +33,7 @@ builder.Host.UseSerilog(
             .Enrich.WithProperty("env", ctx.HostingEnvironment.EnvironmentName)
 );
 
-var moduleAssemblies = new[] { typeof(OperatorsModule).Assembly };
+var moduleAssemblies = new[] { typeof(IdentityModule).Assembly, typeof(OperatorsModule).Assembly };
 
 builder.Services.AddPamShared();
 builder.Services.AddPamMediatR(moduleAssemblies);
@@ -37,11 +41,62 @@ builder.Services.AddPamMassTransit(builder.Configuration);
 
 builder.Services.AddHttpContextAccessor();
 
+builder.Services.AddIdentityModule(builder.Configuration);
 builder.Services.AddOperatorsModule(builder.Configuration);
 
 builder.Services.AddCarter(new DependencyContextAssemblyCatalog(moduleAssemblies));
+
+// MVC controllers are required by OpenIddict's AuthorizationController +
+// UserinfoController in Pam.Identity. Carter (vertical slices) and MVC
+// (these two controllers only) coexist via app.MapCarter() + app.MapControllers().
+builder.Services.AddControllers();
+
 builder.Services.AddOpenApi();
 builder.Services.AddExceptionHandler<CustomExceptionHandler>();
+
+// Authorization: fallback policy requires bearer auth via the OpenIddict
+// validation scheme. Endpoints opt out via .AllowAnonymous(). One named
+// policy per permission code so [Authorize(Policy = "Permissions.<code>")]
+// is the granular check; platform.admin is a meta-permission that grants
+// every other policy via the OR assertion.
+builder.Services.AddAuthorization(options =>
+{
+    options.FallbackPolicy = new AuthorizationPolicyBuilder(
+        OpenIddictValidationAspNetCoreDefaults.AuthenticationScheme
+    )
+        .RequireAuthenticatedUser()
+        .Build();
+
+    foreach (var code in PermissionCodes.All)
+    {
+        options.AddPolicy(
+            $"Permissions.{code}",
+            policy =>
+                policy
+                    .AddAuthenticationSchemes(
+                        OpenIddictValidationAspNetCoreDefaults.AuthenticationScheme
+                    )
+                    .RequireAssertion(ctx =>
+                        ctx.User.HasClaim(PamClaimTypes.Permission, code)
+                        || ctx.User.HasClaim(
+                            PamClaimTypes.Permission,
+                            PermissionCodes.Platform.Admin
+                        )
+                    )
+        );
+    }
+});
+
+// CORS for the back-office SPA's dev origin. Production overrides via
+// `Cors:AllowedOrigins` in appsettings or an env var.
+var corsOrigins =
+    builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+    ?? ["http://localhost:3000"];
+builder.Services.AddCors(options =>
+    options.AddDefaultPolicy(policy =>
+        policy.WithOrigins(corsOrigins).AllowAnyHeader().AllowAnyMethod().AllowCredentials()
+    )
+);
 
 // By default, Minimal APIs handle parameter-binding failures internally and
 // short-circuit to IProblemDetailsService — bypassing our IExceptionHandler.
@@ -186,8 +241,12 @@ var app = builder.Build();
 app.UseForwardedHeaders();
 app.UseSerilogRequestLogging();
 app.UseExceptionHandler();
+app.UseCors();
 app.UseRateLimiter();
+app.UseAuthentication();
+app.UseAuthorization();
 app.MapCarter();
+app.MapControllers();
 
 if (app.Environment.IsDevelopment())
 {
@@ -212,6 +271,7 @@ app.MapHealthChecks(
     )
     .AllowAnonymous();
 
+await app.Services.UseIdentityModuleAsync();
 await app.Services.UseOperatorsModuleAsync();
 
 await app.RunAsync();

@@ -27,22 +27,108 @@ detail section further down for the *what* and *why deferred*.
 
 ### `Pam.Identity` (OpenIddict + ASP.NET Core Identity)
 
-- **What**: embedded auth module. OpenIddict `AddServer` configured for
-  Authorization Code + PKCE + Refresh + ClientCredentials. ASP.NET
-  Identity for `BackOfficeUser`, roles, permissions. Single
-  `IdentityDbContext` (schema `identity`) hosting both Identity and
-  OpenIddict tables.
-- **Public surface**: `/connect/authorize`, `/connect/token`,
-  `/connect/userinfo`, plus CRUD endpoints for users / roles /
-  permissions (back-office only, gated on `operator.admin` permission).
-- **Validation**: `AddValidation().UseLocalServer()` in the same host so
-  module endpoints validate tokens in-process. No external introspection
-  hop.
-- **Trigger**: now (Phase 3). Without back-office auth there's no way
-  for a human to act on Brands or any future module.
-- **Reference patterns**: pro-cr-billing's `User : IdentityUser<Guid>`
-  shape, password policy, lockout, refresh-token rotation —
-  OpenIddict's token storage replaces the hand-rolled pieces.
+Embedded auth module. OpenIddict `AddServer` configured for Authorization
+Code + PKCE + Refresh (Client Credentials wired but not yet granted to any
+client). ASP.NET Core Identity for `BackOfficeUser`, roles, permissions.
+Single `IdentityDbContext` (schema `identity`) hosting Identity tables,
+OpenIddict tables, and the custom `permissions` / `role_permissions` join.
+`AddValidation().UseLocalServer()` in the same host — module endpoints
+validate tokens in-process, no introspection hop.
+
+Phase 3 ships across three PRs.
+
+**PR 1 — OIDC plumbing + login + bootstrap. SHIPPED.**
+
+- `POST /v1/identity/login` (cookie-based, JSON, anonymous, rate-limited
+  5/min) — `SignInManager.PasswordSignInAsync` with lockout-on-failure.
+- `GET/POST /connect/authorize` — Authorization Code + PKCE,
+  `ConsentTypes.Implicit` for the back-office SPA (no consent UI).
+- `POST /connect/token` — code exchange + refresh-token grant, with the
+  claim set refreshed from the live user on every issuance.
+- `GET/POST /connect/userinfo` — standard OIDC userinfo gated on scope.
+- `GET/POST /connect/logout` — clears the Identity cookie + OpenIddict
+  end-session (redirect to `post_logout_redirect_uri`).
+- `POST /connect/par` — Pushed Authorization Requests handled natively.
+- Token issuance projects `sub`, `email`, `name`, `preferred_username`,
+  `role[]`, `pam_permission[]`, `brand_id` (when set). Destinations split
+  between access and identity tokens by scope; `pam_permission` /
+  `brand_id` are access-token-only; security stamp never leaves the
+  cookie.
+- Idempotent seeder: permissions (from `PermissionCodes.All`), roles
+  (Owner / Manager / Operator / Accountant), role-permission grants
+  (`PermissionCodes.RoleDefaults.*`), `pam_api` scope, the `pam-bo` SPA
+  application descriptor (public client, PKCE required, redirect URIs
+  from `Identity:BackOfficeSpa` config), and the bootstrap Owner from
+  `PAM_BOOTSTRAP_OWNER_EMAIL` / `PAM_BOOTSTRAP_OWNER_PASSWORD` env vars
+  (only seeded if no Owner exists).
+- Cookie-challenge redirect to the React SPA's `LoginUrl?returnUrl=…`
+  for browser navigations; JSON / `/v1/*` requests get 401 instead.
+- Quartz hosted service: hourly cleanup of orphaned tokens and
+  authorizations.
+- `Pam.Api` fallback authorization policy requires bearer auth via the
+  OpenIddict validation scheme; one `Permissions.<code>` policy per
+  permission code, with `platform.admin` granting every other policy
+  via assertion.
+
+**PR 2 — back-office user management + MFA. NEXT.**
+
+All endpoints under `/v1/identity/...`, gated on the matching permission.
+
+- `POST /v1/identity/users` — admin creates a back-office user.
+  **Replaces "register"; back-office users are never self-service**, only
+  Owner/Manager can add them. Permission: `identity.users.write`.
+- `GET /v1/identity/users` / `GET /v1/identity/users/{id}` — list +
+  detail. Permission: `identity.users.read`.
+- `PATCH /v1/identity/users/{id}` — email, brand, status changes.
+- `DELETE /v1/identity/users/{id}` — soft-delete (LockoutEnd = far
+  future). Hard-delete violates regulatory retention.
+- `POST /v1/identity/users/{id}/roles` /
+  `DELETE /v1/identity/users/{id}/roles/{role}` — role assignment.
+  Permission: `identity.roles.write`.
+- `POST /v1/identity/users/{id}/unlock` — admin clears a lockout.
+- `POST /v1/identity/me/change-password` — authenticated user changes
+  their own password (knows the current one).
+- `POST /v1/identity/me/mfa/enroll` + `/verify` — TOTP enrollment.
+  Identity has this built in via `UserManager.GenerateAuthenticatorKey`
+  + `VerifyTwoFactorTokenAsync`.
+- `POST /v1/identity/login/mfa` — MFA challenge step. The login response
+  shape `{ mfaRequired: true }` is already wired in PR 1.
+- Apply `[Authorize(Policy = "Permissions.operators.brands.write")]` to
+  the existing `CreateBrand` endpoint and read-policy to `GetBrand`.
+- Phase 3 unit tests: `BackOfficeUser` aggregate behavior + role
+  assignment + permission resolution against `PermissionResolver`.
+
+**PR 3 — email-driven flows.**
+
+Blocked on `Pam.Notifications` (or a stub email sender — TBD).
+
+- `POST /v1/identity/forgot-password` — issues a token, sends a reset
+  link via `Pam.Notifications`.
+- `POST /v1/identity/reset-password` — consumes the token, sets new
+  password.
+- `POST /v1/identity/users/{id}/confirm-email` — completes email
+  verification. Identity's defaults already require this if
+  `SignIn.RequireConfirmedEmail = true` (currently false until PR 3).
+
+**Deferred indefinitely**
+
+- Self-service back-office registration. Wrong threat model — anyone
+  with `POST /v1/identity/users` is a privilege-boundary breach. The
+  bootstrap Owner is the on-ramp.
+- Dynamic client registration (`/connect/register`). We own all the
+  clients; only `pam-bo` exists today, future module-to-module clients
+  are seeded.
+
+**Player auth — Phase 4, not Phase 3.**
+
+`POST /v1/auth/register` (public, self-service) lands when the Players
+module returns. Different scope set, different audience under the same
+OpenIddict server.
+
+**Reference patterns**: `pro-cr-billing`'s `User : IdentityUser<Guid>`
+shape (lockout, password policy) carried over; `pro-cr-billing`'s custom
+JWT + RefreshToken rotation NOT carried over (OpenIddict's token storage
+replaces it).
 
 ### Outbox + transactional integration-event publishing
 

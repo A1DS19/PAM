@@ -48,6 +48,20 @@
     <PackageVersion Include="StackExchange.Redis" Version="2.12.14" />
   </ItemGroup>
 
+  <!--
+    OpenIddict is the embedded OAuth 2.0 / OIDC server (server + validation +
+    EF Core stores). Quartz drives the scheduled cleanup job for orphan
+    tokens/authorizations. ASP.NET Core Identity owns user storage, password
+    hashing, lockout, MFA — Pam.Identity glues them together.
+  -->
+  <ItemGroup Label="Identity (OpenIddict + ASP.NET Core Identity)">
+    <PackageVersion Include="OpenIddict.AspNetCore" Version="7.5.0" />
+    <PackageVersion Include="OpenIddict.EntityFrameworkCore" Version="7.5.0" />
+    <PackageVersion Include="OpenIddict.Quartz" Version="7.5.0" />
+    <PackageVersion Include="Quartz.Extensions.Hosting" Version="3.18.1" />
+    <PackageVersion Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.7" />
+  </ItemGroup>
+
   <ItemGroup Label="Observability">
     <PackageVersion Include="Serilog.AspNetCore" Version="10.0.0" />
     <PackageVersion Include="Serilog.Sinks.Seq" Version="9.0.0" />

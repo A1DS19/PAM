@@ -8,6 +8,10 @@
     <Project Path="src/Modules/Operators/Pam.Operators.Contracts/Pam.Operators.Contracts.csproj" />
     <Project Path="src/Modules/Operators/Pam.Operators/Pam.Operators.csproj" />
   </Folder>
+  <Folder Name="/src/Modules/Identity/">
+    <Project Path="src/Modules/Identity/Pam.Identity.Contracts/Pam.Identity.Contracts.csproj" />
+    <Project Path="src/Modules/Identity/Pam.Identity/Pam.Identity.csproj" />
+  </Folder>
   <Folder Name="/src/Shared/">
     <Project Path="src/Shared/Pam.Shared.Contracts/Pam.Shared.Contracts.csproj" />
     <Project Path="src/Shared/Pam.Shared.Messaging/Pam.Shared.Messaging.csproj" />
@@ -15,5 +19,6 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Pam.Operators.UnitTests/Pam.Operators.UnitTests.csproj" />
+    <Project Path="tests/Pam.Identity.UnitTests/Pam.Identity.UnitTests.csproj" />
   </Folder>
 </Solution>
