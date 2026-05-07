@@ -6,7 +6,6 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\Modules\Players\Pam.Players\Pam.Players.csproj" />
     <ProjectReference Include="..\..\Shared\Pam.Shared\Pam.Shared.csproj" />
     <ProjectReference Include="..\..\Shared\Pam.Shared.Messaging\Pam.Shared.Messaging.csproj" />
   </ItemGroup>
