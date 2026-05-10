@@ -56,7 +56,7 @@ builder.Services.AddHttpContextAccessor();
 // Notifications first — Identity's forgot-password / send-confirmation-email
 // handlers resolve IEmailSender from Notifications during DI graph building.
 builder.Services.AddNotificationsModule(builder.Configuration);
-builder.Services.AddIdentityModule(builder.Configuration);
+builder.Services.AddIdentityModule(builder.Configuration, builder.Environment);
 builder.Services.AddOperatorsModule(builder.Configuration);
 
 builder.Services.AddCarter(new DependencyContextAssemblyCatalog(moduleAssemblies));
