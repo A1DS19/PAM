@@ -24,18 +24,23 @@ public sealed class MfaEnrollHandler(
 {
     private const string Issuer = "PAM";
 
-    public async Task<MfaEnrollResult> Handle(MfaEnrollCommand command, CancellationToken cancellationToken)
+    public async Task<MfaEnrollResult> Handle(
+        MfaEnrollCommand command,
+        CancellationToken cancellationToken
+    )
     {
-        var principal = httpContext.HttpContext?.User
+        var principal =
+            httpContext.HttpContext?.User
             ?? throw new UnauthorizedAccessException("No HTTP context.");
-        var sub = principal.FindFirstValue("sub")
-            ?? principal.FindFirstValue(ClaimTypes.NameIdentifier);
+        var sub =
+            principal.FindFirstValue("sub") ?? principal.FindFirstValue(ClaimTypes.NameIdentifier);
         if (string.IsNullOrEmpty(sub))
         {
             throw new UnauthorizedAccessException("Caller has no sub claim.");
         }
 
-        var user = await userManager.FindByIdAsync(sub)
+        var user =
+            await userManager.FindByIdAsync(sub)
             ?? throw new UnauthorizedAccessException("Authenticated user no longer exists.");
 
         var key = await userManager.GetAuthenticatorKeyAsync(user);
@@ -49,7 +54,8 @@ public sealed class MfaEnrollHandler(
                     string.Join("; ", resetResult.Errors.Select(e => $"{e.Code}: {e.Description}"))
                 );
             }
-            key = await userManager.GetAuthenticatorKeyAsync(user)
+            key =
+                await userManager.GetAuthenticatorKeyAsync(user)
                 ?? throw new InvalidOperationException(
                     "GetAuthenticatorKeyAsync returned null after a successful reset."
                 );

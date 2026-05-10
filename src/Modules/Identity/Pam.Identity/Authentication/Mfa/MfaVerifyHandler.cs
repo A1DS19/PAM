@@ -15,19 +15,22 @@ public sealed class MfaVerifyHandler(
 {
     public async Task Handle(MfaVerifyCommand command, CancellationToken cancellationToken)
     {
-        var principal = httpContext.HttpContext?.User
+        var principal =
+            httpContext.HttpContext?.User
             ?? throw new UnauthorizedAccessException("No HTTP context.");
-        var sub = principal.FindFirstValue("sub")
-            ?? principal.FindFirstValue(ClaimTypes.NameIdentifier);
+        var sub =
+            principal.FindFirstValue("sub") ?? principal.FindFirstValue(ClaimTypes.NameIdentifier);
         if (string.IsNullOrEmpty(sub))
         {
             throw new UnauthorizedAccessException("Caller has no sub claim.");
         }
 
-        var user = await userManager.FindByIdAsync(sub)
+        var user =
+            await userManager.FindByIdAsync(sub)
             ?? throw new UnauthorizedAccessException("Authenticated user no longer exists.");
 
-        var stripped = command.Code.Replace(" ", string.Empty, StringComparison.Ordinal)
+        var stripped = command
+            .Code.Replace(" ", string.Empty, StringComparison.Ordinal)
             .Replace("-", string.Empty, StringComparison.Ordinal);
         var verified = await userManager.VerifyTwoFactorTokenAsync(
             user,
