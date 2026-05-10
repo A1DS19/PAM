@@ -18,6 +18,15 @@ public sealed class BackOfficeSpaOptions
     // can navigate back into the OIDC flow after login.
     public string LoginUrl { get; init; } = "http://localhost:3000/login";
 
+    // Where the password-reset email link lands. The SPA reads `?email=` +
+    // `?token=` from the query, lets the user pick a new password, then
+    // posts to POST /v1/identity/reset-password.
+    public string ResetPasswordUrl { get; init; } = "http://localhost:3000/reset-password";
+
+    // Where the email-confirmation link lands. The SPA reads `?email=` +
+    // `?token=` and posts to POST /v1/identity/me/confirm-email.
+    public string ConfirmEmailUrl { get; init; } = "http://localhost:3000/confirm-email";
+
     [SuppressMessage(
         "Performance",
         "CA1819:Properties should not return arrays",

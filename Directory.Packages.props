@@ -50,6 +50,16 @@
   </ItemGroup>
 
   <!--
+    MailKit is the modern .NET SMTP/IMAP library — System.Net.Mail.SmtpClient
+    is obsoleted by Microsoft for new code. Used by Pam.Identity's
+    SmtpEmailSender for password-reset + email-confirmation flows (dev sink:
+    Mailpit at :1025). Lifts to Pam.Notifications when that module lands.
+  -->
+  <ItemGroup Label="Email">
+    <PackageVersion Include="MailKit" Version="4.8.0" />
+  </ItemGroup>
+
+  <!--
     OpenIddict is the embedded OAuth 2.0 / OIDC server (server + validation +
     EF Core stores). Quartz drives the scheduled cleanup job for orphan
     tokens/authorizations. ASP.NET Core Identity owns user storage, password

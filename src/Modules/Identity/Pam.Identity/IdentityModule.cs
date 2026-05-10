@@ -80,6 +80,11 @@ public static class IdentityModule
             .Bind(configuration.GetSection(BackOfficeSpaOptions.SectionName))
             .ValidateOnStart();
 
+        // IEmailSender lives in Pam.Notifications. Identity injects it
+        // (forgot-password, send-confirmation-email) but does not register
+        // it. AddNotificationsModule must run before AddIdentityModule in
+        // Pam.Api/Program.cs.
+
         services.AddScoped<PermissionResolver>();
         services.AddScoped<IdentitySeeder>();
 
@@ -134,8 +139,10 @@ public static class IdentityModule
                     ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
                     return Task.CompletedTask;
                 }
-                var spa = ctx.HttpContext.RequestServices
-                    .GetRequiredService<IOptions<BackOfficeSpaOptions>>()
+                var spa = ctx
+                    .HttpContext.RequestServices.GetRequiredService<
+                        IOptions<BackOfficeSpaOptions>
+                    >()
                     .Value;
                 var returnUrl = Uri.EscapeDataString(ctx.RedirectUri);
                 ctx.Response.Redirect($"{spa.LoginUrl}?returnUrl={returnUrl}");
@@ -173,7 +180,9 @@ public static class IdentityModule
                     .SetEndSessionEndpointUris("connect/logout")
                     .SetTokenEndpointUris("connect/token")
                     .SetUserInfoEndpointUris("connect/userinfo")
-                    .SetPushedAuthorizationEndpointUris("connect/par");
+                    .SetPushedAuthorizationEndpointUris("connect/par")
+                    .SetRevocationEndpointUris("connect/revocation")
+                    .SetIntrospectionEndpointUris("connect/introspect");
 
                 // Standard OIDC scopes plus our API audience scope. Clients
                 // requesting `pam_api` get an access token whose `aud`
@@ -223,11 +232,36 @@ public static class IdentityModule
             .AddValidation(options =>
             {
                 // Same host as the server — keys + scopes imported in-process.
-                // No HTTP introspection round-trip; revocation visibility is
-                // bounded by token TTL until Limits ships and we enable
-                // EnableAuthorizationEntryValidation here.
+                // No HTTP introspection round-trip.
                 options.UseLocalServer();
                 options.UseAspNetCore();
+
+                // Entry validation: every API call cross-checks the access
+                // token's authorization + token rows in identity.openiddict_*.
+                // Tradeoff is explicit, document here so the next person
+                // looking at perf data understands the wiring:
+                //
+                //   Pros — revocation is effectively instant. Soft-deleting a
+                //          user, removing a role, or hitting /connect/revocation
+                //          kills the user's outstanding tokens at the next
+                //          request, instead of waiting for the security-stamp
+                //          validation window (~30min default).
+                //
+                //   Cons — 2 extra Postgres lookups per authenticated request.
+                //          Both are PK reads on indexed columns (sub-ms), and
+                //          Postgres caches them in shared buffers. Fine for the
+                //          back-office surface (~tens to low-hundreds of
+                //          operators). Becomes a problem if/when we wire a
+                //          high-throughput surface like Pam.GameWallet
+                //          (sub-200ms p99, thousands of req/s) — that host
+                //          should configure its own validation stack WITHOUT
+                //          these flags and accept short revocation lag.
+                //
+                // The Quartz cleanup job (UseQuartz in AddCore above) prunes
+                // expired / revoked tokens hourly, so the openiddict_tokens
+                // table tracks active sessions, not all-time history.
+                options.EnableAuthorizationEntryValidation();
+                options.EnableTokenEntryValidation();
             });
 
         services

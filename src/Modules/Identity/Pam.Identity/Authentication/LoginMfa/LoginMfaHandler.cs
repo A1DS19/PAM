@@ -12,9 +12,13 @@ namespace Pam.Identity.Authentication.LoginMfa;
 public sealed class LoginMfaHandler(SignInManager<BackOfficeUser> signInManager)
     : ICommandHandler<LoginMfaCommand, LoginResult>
 {
-    public async Task<LoginResult> Handle(LoginMfaCommand command, CancellationToken cancellationToken)
+    public async Task<LoginResult> Handle(
+        LoginMfaCommand command,
+        CancellationToken cancellationToken
+    )
     {
-        var stripped = command.Code.Replace(" ", string.Empty, StringComparison.Ordinal)
+        var stripped = command
+            .Code.Replace(" ", string.Empty, StringComparison.Ordinal)
             .Replace("-", string.Empty, StringComparison.Ordinal);
 
         var result = await signInManager.TwoFactorAuthenticatorSignInAsync(

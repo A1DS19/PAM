@@ -4,24 +4,28 @@ What's deferred and the trigger that should bring each forward.
 
 ## Up next — ordered punch-list
 
-PR 1 and PR 2 of Phase 3 are shipped on `main`. The remaining gate before
-Players returns is PR 3 (email-driven flows), which blocks on a real
-notifications / email-sender stub.
+Phase 3 (`Pam.Identity`) is complete across three PRs. Next is Players
+returning as module #3.
 
-1. **Phase 3 PR 3 — email-driven flows.** Forgot-password / reset-password /
-   confirm-email. Needs `Pam.Notifications` (or a stub) to send the email.
-   See [`Pam.Identity`](#pamidentity-openiddict--aspnet-core-identity) below.
-2. **Re-introduce `Pam.Players`** (now as module #3 under the new
-   ordering). Player aggregate scoped under a `Brand`, authenticated via
-   the embedded IDP issued in Phase 3. KYC + sessions + limits land as
-   sub-aggregates of the same module.
-3. **Test gate before module #4** — outbox + integration tests
+1. **Re-introduce `Pam.Players`** (module #3). Player aggregate scoped
+   under a `Brand`, authenticated via the embedded IDP under a separate
+   audience (`pam_player_api`). Self-service registration + KYC +
+   sessions + limits land as sub-aggregates of the same module.
+2. **Test gate before module #4** — outbox + integration tests
    (Testcontainers: real Postgres) + arch tests (`NetArchTest.Rules`).
    See [Outbox](#outbox--transactional-integration-event-publishing) and
    [Tests](#tests).
-4. **Module #4 — `Pam.Wallet`** (double-entry ledger). Outbox is
+3. **Module #4 — `Pam.Wallet`** (double-entry ledger). Outbox is
    non-negotiable from day one of that module. See
    [the build order](#modules-not-yet-built) below.
+4. **`Pam.Notifications` expansion** — module skeleton +
+   `IEmailSender` are in place (`Pam.Notifications` +
+   `Pam.Notifications.Contracts`). Still to come: integration-event
+   consumers (the `Consumers/` folder is empty, waiting for Players to
+   publish), templating + locale resolution, send-audit-log DbContext,
+   SMS + push transports. Each piece lands when the first consumer
+   needs it. See *Notifications and cross-module email* in
+   ARCHITECTURE.md for the pattern.
 
 ## Deferred — pinned, will land when triggered
 
@@ -110,17 +114,46 @@ All endpoints under `/v1/identity/...`, gated on the matching permission.
   MfaVerify, plus `PermissionResolver` against the EF Core in-memory
   provider. 33 Identity tests + 18 Operators tests, all green.
 
-**PR 3 — email-driven flows. NEXT.**
+**PR 3 — email flows + MFA durability + revocation tightening. SHIPPED.**
 
-Blocked on `Pam.Notifications` (or a stub email sender — TBD).
+Bundled three things: the ROADMAP-planned email flows, plus two pieces
+that proved necessary once MFA was actually in use (recovery + admin
+reset), plus the validation-stack hardening that makes revocation feel
+instant.
 
-- `POST /v1/identity/forgot-password` — issues a token, sends a reset
-  link via `Pam.Notifications`.
-- `POST /v1/identity/reset-password` — consumes the token, sets new
-  password.
-- `POST /v1/identity/users/{id}/confirm-email` — completes email
-  verification. Identity's defaults already require this if
-  `SignIn.RequireConfirmedEmail = true` (currently false until PR 3).
+- `POST /v1/identity/forgot-password` (anonymous, anti-enumeration: always
+  204) — issues `UserManager.GeneratePasswordResetTokenAsync` and sends
+  the reset link via `IEmailSender` only when the email exists and is
+  confirmed.
+- `POST /v1/identity/reset-password { email, token, newPassword }` —
+  consumes the token, sets the new password. Rotates the security stamp
+  so sessions on other devices die.
+- `POST /v1/identity/confirm-email { email, token }` — anonymous; user
+  clicks the link from email and posts back.
+- `POST /v1/identity/users/{id}/send-confirmation-email` — admin re-send
+  (gated on `identity.users.write`). Auto-fires on `POST /v1/identity/users`
+  creation; SMTP failure is logged, not fatal — admin can retry.
+- `POST /v1/identity/me/mfa/recovery-codes` — generates 10 one-time
+  codes via `GenerateNewTwoFactorRecoveryCodesAsync`. Plaintext returned
+  once; previously-issued codes get invalidated on regenerate.
+- `POST /v1/identity/login/recovery-code { code }` — completes the
+  partial sign-in using a recovery code instead of a TOTP (one-time use).
+- `POST /v1/identity/me/mfa/disable { currentPassword }` — self-disable
+  with password challenge; clears the authenticator key so re-enable
+  starts fresh.
+- `POST /v1/identity/users/{id}/mfa/reset` — admin reset (gated on
+  `identity.users.write`). Clears authenticator, disables 2FA, rotates
+  security stamp.
+- Email sender: `IEmailSender` + `SmtpEmailSender` (MailKit) targeting
+  the new `pam-mailpit` dev container at `localhost:1025`. `Identity:Smtp`
+  config block carries host/port/credentials/from-address — production
+  swap is a config change.
+- OpenIddict validation now uses
+  `EnableAuthorizationEntryValidation()` + `EnableTokenEntryValidation()`
+  — revocation propagates immediately instead of waiting for the
+  security-stamp validation window. `/connect/revocation` and
+  `/connect/introspect` URIs registered on the server; the back-office
+  SPA descriptor gets revocation+introspection endpoint permissions.
 
 **Deferred indefinitely**
 
@@ -225,9 +258,10 @@ replaces it).
 
 - **Done**: unit tests for `Pam.Operators` (Brand aggregate behavior +
   CreateBrand validator) and `Pam.Identity` (validators for CreateUser /
-  ListUsers / ChangePassword / MfaVerify + `PermissionResolver` against
-  the EF Core in-memory provider). 51 tests on xUnit 3 + FluentAssertions
-  7, ~1s run.
+  ListUsers / ChangePassword / MfaVerify / MfaDisable / ForgotPassword /
+  ResetPassword / ConfirmEmail / LoginRecoveryCode + `PermissionResolver`
+  against the EF Core in-memory provider). 70 tests on xUnit 3 +
+  FluentAssertions 7, ~1s run.
 - **What's left**: integration tests with Testcontainers (real Postgres,
   real RabbitMQ) for the create-brand and login flows end-to-end;
   architecture tests via `NetArchTest.Rules` for module-boundary
