@@ -15,16 +15,18 @@ public sealed class ChangePasswordHandler(
 {
     public async Task Handle(ChangePasswordCommand command, CancellationToken cancellationToken)
     {
-        var principal = httpContext.HttpContext?.User
+        var principal =
+            httpContext.HttpContext?.User
             ?? throw new UnauthorizedAccessException("No HTTP context.");
-        var sub = principal.FindFirstValue("sub")
-            ?? principal.FindFirstValue(ClaimTypes.NameIdentifier);
+        var sub =
+            principal.FindFirstValue("sub") ?? principal.FindFirstValue(ClaimTypes.NameIdentifier);
         if (string.IsNullOrEmpty(sub))
         {
             throw new UnauthorizedAccessException("Caller has no sub claim.");
         }
 
-        var user = await userManager.FindByIdAsync(sub)
+        var user =
+            await userManager.FindByIdAsync(sub)
             ?? throw new UnauthorizedAccessException("Authenticated user no longer exists.");
 
         var result = await userManager.ChangePasswordAsync(
