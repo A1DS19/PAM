@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
 using Pam.Identity.Authentication;
 using Pam.Identity.Data;
@@ -27,7 +28,8 @@ public static class IdentityModule
 
     public static IServiceCollection AddIdentityModule(
         this IServiceCollection services,
-        IConfiguration configuration
+        IConfiguration configuration,
+        IHostEnvironment environment
     )
     {
         var connectionString =
@@ -221,13 +223,23 @@ public static class IdentityModule
                 // PAR doesn't have a passthrough — OpenIddict handles
                 // /connect/par natively. The other endpoints route to our
                 // AuthorizationController + login endpoint.
-                options
+                //
+                // HTTPS is required on /connect/* in production (OpenIddict
+                // checks Request.IsHttps; via ForwardedHeaders middleware
+                // that reflects X-Forwarded-Proto from the TLS-terminating
+                // proxy). In Development we disable the check so the API
+                // works under plain http://localhost:5000.
+                var aspNetCore = options
                     .UseAspNetCore()
                     .EnableAuthorizationEndpointPassthrough()
                     .EnableEndSessionEndpointPassthrough()
                     .EnableTokenEndpointPassthrough()
                     .EnableUserInfoEndpointPassthrough()
                     .EnableStatusCodePagesIntegration();
+                if (environment.IsDevelopment())
+                {
+                    aspNetCore.DisableTransportSecurityRequirement();
+                }
             })
             .AddValidation(options =>
             {
