@@ -7,7 +7,9 @@
       "launchBrowser": false,
       "applicationUrl": "http://localhost:5000",
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "PAM_BOOTSTRAP_OWNER_EMAIL": "owner@test.local",
+        "PAM_BOOTSTRAP_OWNER_PASSWORD": "OwnerPassword123!"
       }
     }
   }

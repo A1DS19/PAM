@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using OpenIddict.Abstractions;
 using Pam.Identity.Contracts.Permissions;
+using Pam.Identity.Contracts.Roles;
 using Pam.Identity.Data;
 using Pam.Identity.Permissions.Models;
 using Pam.Identity.Users.Models;
@@ -32,11 +33,6 @@ public sealed class IdentitySeeder(
     ILogger<IdentitySeeder> logger
 )
 {
-    private const string OwnerRole = "Owner";
-    private const string ManagerRole = "Manager";
-    private const string OperatorRole = "Operator";
-    private const string AccountantRole = "Accountant";
-
     public async Task SeedAsync(CancellationToken ct)
     {
         await SeedPermissionsAsync(ct);
@@ -74,7 +70,7 @@ public sealed class IdentitySeeder(
 
     private async Task SeedRolesAsync()
     {
-        foreach (var role in new[] { OwnerRole, ManagerRole, OperatorRole, AccountantRole })
+        foreach (var role in RoleNames.All)
         {
             if (await roleManager.RoleExistsAsync(role))
             {
@@ -98,10 +94,10 @@ public sealed class IdentitySeeder(
     {
         var roleMap = new Dictionary<string, IReadOnlyList<string>>(StringComparer.Ordinal)
         {
-            [OwnerRole] = PermissionCodes.RoleDefaults.Owner,
-            [ManagerRole] = PermissionCodes.RoleDefaults.Manager,
-            [OperatorRole] = PermissionCodes.RoleDefaults.Operator,
-            [AccountantRole] = PermissionCodes.RoleDefaults.Accountant,
+            [RoleNames.Owner] = PermissionCodes.RoleDefaults.Owner,
+            [RoleNames.Manager] = PermissionCodes.RoleDefaults.Manager,
+            [RoleNames.Operator] = PermissionCodes.RoleDefaults.Operator,
+            [RoleNames.Accountant] = PermissionCodes.RoleDefaults.Accountant,
         };
 
         var permissionsByCode = await db
@@ -213,7 +209,7 @@ public sealed class IdentitySeeder(
     // Owner has logged in and rotated their password.
     private async Task SeedBootstrapOwnerAsync(CancellationToken ct)
     {
-        var ownersInRole = await userManager.GetUsersInRoleAsync(OwnerRole);
+        var ownersInRole = await userManager.GetUsersInRoleAsync(RoleNames.Owner);
         if (ownersInRole.Count > 0)
         {
             return;
@@ -245,7 +241,7 @@ public sealed class IdentitySeeder(
             );
         }
 
-        var roleResult = await userManager.AddToRoleAsync(user, OwnerRole);
+        var roleResult = await userManager.AddToRoleAsync(user, RoleNames.Owner);
         if (!roleResult.Succeeded)
         {
             throw new InvalidOperationException(

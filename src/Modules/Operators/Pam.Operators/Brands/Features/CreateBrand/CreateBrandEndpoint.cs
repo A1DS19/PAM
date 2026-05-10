@@ -3,6 +3,7 @@ using MediatR;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Pam.Identity.Contracts.Permissions;
 
 namespace Pam.Operators.Brands.Features.CreateBrand;
 
@@ -22,7 +23,9 @@ public sealed class CreateBrandEndpoint : ICarterModule
             .WithName("CreateBrand")
             .Produces(StatusCodes.Status201Created)
             .ProducesValidationProblem()
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status409Conflict)
-            .AllowAnonymous();
+            .RequireAuthorization($"Permissions.{PermissionCodes.Operators.BrandsWrite}");
     }
 }

@@ -62,14 +62,8 @@ public static class PermissionCodes
         ];
 
         public static ImmutableArray<string> Operator { get; } =
-        [
-            Operators.BrandsRead,
-            Identity.UsersRead,
-        ];
+        [Operators.BrandsRead, Identity.UsersRead];
 
-        public static ImmutableArray<string> Accountant { get; } =
-        [
-            Operators.BrandsRead,
-        ];
+        public static ImmutableArray<string> Accountant { get; } = [Operators.BrandsRead];
     }
 }
