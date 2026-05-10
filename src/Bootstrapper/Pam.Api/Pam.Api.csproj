@@ -25,6 +25,7 @@
 
     <PackageReference Include="Serilog.AspNetCore" />
     <PackageReference Include="Serilog.Sinks.Seq" />
+    <PackageReference Include="Serilog.Sinks.OpenTelemetry" />
     <PackageReference Include="Serilog.Enrichers.Environment" />
 
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
