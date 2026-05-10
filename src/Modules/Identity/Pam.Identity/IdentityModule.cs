@@ -139,8 +139,10 @@ public static class IdentityModule
                     ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
                     return Task.CompletedTask;
                 }
-                var spa = ctx.HttpContext.RequestServices
-                    .GetRequiredService<IOptions<BackOfficeSpaOptions>>()
+                var spa = ctx
+                    .HttpContext.RequestServices.GetRequiredService<
+                        IOptions<BackOfficeSpaOptions>
+                    >()
                     .Value;
                 var returnUrl = Uri.EscapeDataString(ctx.RedirectUri);
                 ctx.Response.Redirect($"{spa.LoginUrl}?returnUrl={returnUrl}");
