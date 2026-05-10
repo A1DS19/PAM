@@ -4,13 +4,13 @@ What's deferred and the trigger that should bring each forward.
 
 ## Up next — ordered punch-list
 
-The current focus is Phase 3, then Players returns. Each item links to a
-detail section further down for the *what* and *why deferred*.
+PR 1 and PR 2 of Phase 3 are shipped on `main`. The remaining gate before
+Players returns is PR 3 (email-driven flows), which blocks on a real
+notifications / email-sender stub.
 
-1. **Phase 3 — `Pam.Identity` (OpenIddict + ASP.NET Core Identity).**
-   Embedded OAuth 2.0 / OIDC server, back-office Users & Agents, roles +
-   permissions. See [`Pam.Identity`](#pamidentity-openiddict--aspnet-core-identity)
-   below and ADR #16.
+1. **Phase 3 PR 3 — email-driven flows.** Forgot-password / reset-password /
+   confirm-email. Needs `Pam.Notifications` (or a stub) to send the email.
+   See [`Pam.Identity`](#pamidentity-openiddict--aspnet-core-identity) below.
 2. **Re-introduce `Pam.Players`** (now as module #3 under the new
    ordering). Player aggregate scoped under a `Brand`, authenticated via
    the embedded IDP issued in Phase 3. KYC + sessions + limits land as
@@ -70,35 +70,47 @@ Phase 3 ships across three PRs.
   permission code, with `platform.admin` granting every other policy
   via assertion.
 
-**PR 2 — back-office user management + MFA. NEXT.**
+**PR 2 — back-office user management + MFA. SHIPPED.**
 
 All endpoints under `/v1/identity/...`, gated on the matching permission.
 
 - `POST /v1/identity/users` — admin creates a back-office user.
-  **Replaces "register"; back-office users are never self-service**, only
-  Owner/Manager can add them. Permission: `identity.users.write`.
-- `GET /v1/identity/users` / `GET /v1/identity/users/{id}` — list +
-  detail. Permission: `identity.users.read`.
-- `PATCH /v1/identity/users/{id}` — email, brand, status changes.
-- `DELETE /v1/identity/users/{id}` — soft-delete (LockoutEnd = far
-  future). Hard-delete violates regulatory retention.
+  Back-office users are never self-service; only Owner/Manager can add
+  them. Permission: `identity.users.write`.
+- `GET /v1/identity/users` (paged: `page`, `pageSize`, optional
+  `brandId` / `role` / `lockedOut`) and `GET /v1/identity/users/{id}`.
+  Permission: `identity.users.read`.
+- `PATCH /v1/identity/users/{id}` — email, brandId, lockoutEnabled.
+  Status flags (EmailConfirmed, TwoFactorEnabled) mutate through their
+  own endpoints because they carry side effects.
+- `DELETE /v1/identity/users/{id}` — soft-delete via `LockoutEnd =
+  DateTimeOffset.MaxValue` + security-stamp rotation. Hard-delete
+  violates regulatory retention.
 - `POST /v1/identity/users/{id}/roles` /
-  `DELETE /v1/identity/users/{id}/roles/{role}` — role assignment.
+  `DELETE /v1/identity/users/{id}/roles/{role}` — idempotent. Each
+  change rotates the security stamp so token claim sets refresh.
   Permission: `identity.roles.write`.
-- `POST /v1/identity/users/{id}/unlock` — admin clears a lockout.
+- `POST /v1/identity/users/{id}/unlock` — clears the lockout end +
+  resets failed-access count; refuses on soft-deleted users.
 - `POST /v1/identity/me/change-password` — authenticated user changes
-  their own password (knows the current one).
-- `POST /v1/identity/me/mfa/enroll` + `/verify` — TOTP enrollment.
-  Identity has this built in via `UserManager.GenerateAuthenticatorKey`
-  + `VerifyTwoFactorTokenAsync`.
-- `POST /v1/identity/login/mfa` — MFA challenge step. The login response
-  shape `{ mfaRequired: true }` is already wired in PR 1.
-- Apply `[Authorize(Policy = "Permissions.operators.brands.write")]` to
-  the existing `CreateBrand` endpoint and read-policy to `GetBrand`.
-- Phase 3 unit tests: `BackOfficeUser` aggregate behavior + role
-  assignment + permission resolution against `PermissionResolver`.
+  their own password (knows the current one). Rate-limited.
+- `POST /v1/identity/me/mfa/enroll` returns the base32 shared key + an
+  `otpauth://` URI for QR rendering. `POST /v1/identity/me/mfa/verify`
+  verifies the TOTP and flips `TwoFactorEnabled`.
+- `POST /v1/identity/login/mfa` — MFA challenge step using
+  `SignInManager.TwoFactorAuthenticatorSignInAsync`.
+- `CreateBrand` and `GetBrand` now require
+  `Permissions.operators.brands.write` and `Permissions.operators.brands.read`
+  respectively (no more `.AllowAnonymous()`).
+- `HttpUserContext` replaces the default `SystemUserContext` so audit
+  columns reflect the authenticated operator's OIDC `sub` (with fallback
+  to `Actor.System` for startup work / `Actor.Anonymous` for anonymous
+  endpoints).
+- Tests: validator suites for CreateUser / ListUsers / ChangePassword /
+  MfaVerify, plus `PermissionResolver` against the EF Core in-memory
+  provider. 33 Identity tests + 18 Operators tests, all green.
 
-**PR 3 — email-driven flows.**
+**PR 3 — email-driven flows. NEXT.**
 
 Blocked on `Pam.Notifications` (or a stub email sender — TBD).
 
@@ -212,15 +224,18 @@ replaces it).
 ### Tests
 
 - **Done**: unit tests for `Pam.Operators` (Brand aggregate behavior +
-  CreateBrand validator) on xUnit 3 + FluentAssertions 7. 18 tests,
-  ~80ms run.
+  CreateBrand validator) and `Pam.Identity` (validators for CreateUser /
+  ListUsers / ChangePassword / MfaVerify + `PermissionResolver` against
+  the EF Core in-memory provider). 51 tests on xUnit 3 + FluentAssertions
+  7, ~1s run.
 - **What's left**: integration tests with Testcontainers (real Postgres,
-  real RabbitMQ) for the create-brand flow end-to-end; architecture
-  tests via `NetArchTest.Rules` for module-boundary enforcement.
+  real RabbitMQ) for the create-brand and login flows end-to-end;
+  architecture tests via `NetArchTest.Rules` for module-boundary
+  enforcement.
 - **Trigger**: before module #4 (Wallet) lands. Architecture tests in
-  particular pay for themselves the moment a second module makes it
-  possible to cross-reference internal types — which is exactly when
-  Identity ships.
+  particular pay for themselves now that a second module (Identity)
+  exists and references back into `Pam.Identity.Contracts` from
+  `Pam.Operators`.
 
 ### Legacy `gbs-db` cutover plan
 
