@@ -49,6 +49,16 @@ services:
       timeout: 5s
       retries: 10
 
+  mailpit:
+    # SMTP sink for dev. The API sends to :1025; messages land in the web
+    # UI at http://localhost:8025. Production uses a real SMTP/SES backend
+    # — swap Smtp:Host in config to migrate.
+    image: axllent/mailpit:latest
+    container_name: pam-mailpit
+    ports:
+      - "1025:1025"
+      - "8025:8025"
+
   seq:
     image: datalust/seq:latest
     container_name: pam-seq

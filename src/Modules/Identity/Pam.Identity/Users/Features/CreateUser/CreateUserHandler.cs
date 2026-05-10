@@ -1,5 +1,8 @@
+using MediatR;
 using Microsoft.AspNetCore.Identity;
+using Microsoft.Extensions.Logging;
 using Pam.Identity.Users.Exceptions;
+using Pam.Identity.Users.Features.SendConfirmationEmail;
 using Pam.Identity.Users.Models;
 using Pam.Shared.Contracts.CQRS;
 using Pam.Shared.Exceptions;
@@ -9,8 +12,11 @@ namespace Pam.Identity.Users.Features.CreateUser;
 // Admin-create flow. Back-office users are never self-service: only callers
 // with `identity.users.write` can hit this endpoint. The bootstrap Owner is
 // the on-ramp; every subsequent user is created here.
-public sealed class CreateUserHandler(UserManager<BackOfficeUser> userManager)
-    : ICommandHandler<CreateUserCommand, Guid>
+public sealed class CreateUserHandler(
+    UserManager<BackOfficeUser> userManager,
+    ISender mediator,
+    ILogger<CreateUserHandler> logger
+) : ICommandHandler<CreateUserCommand, Guid>
 {
     public async Task<Guid> Handle(CreateUserCommand command, CancellationToken cancellationToken)
     {
@@ -54,6 +60,23 @@ public sealed class CreateUserHandler(UserManager<BackOfficeUser> userManager)
                     FormatErrors(roleResult)
                 );
             }
+        }
+
+        // Auto-fire the confirmation email. SMTP failure is logged but does
+        // NOT roll back the user — the admin can retry via the
+        // send-confirmation-email endpoint, and a created-but-unconfirmed
+        // user is a recoverable state.
+        try
+        {
+            await mediator.Send(new SendConfirmationEmailCommand(user.Id), cancellationToken);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(
+                ex,
+                "Failed to send confirmation email for new user {UserId}; admin can retry",
+                user.Id
+            );
         }
 
         return user.Id;

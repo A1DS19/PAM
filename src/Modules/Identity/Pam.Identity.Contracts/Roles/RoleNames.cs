@@ -12,11 +12,5 @@ public static class RoleNames
     public const string Operator = "Operator";
     public const string Accountant = "Accountant";
 
-    public static ImmutableArray<string> All { get; } =
-    [
-        Owner,
-        Manager,
-        Operator,
-        Accountant,
-    ];
+    public static ImmutableArray<string> All { get; } = [Owner, Manager, Operator, Accountant];
 }

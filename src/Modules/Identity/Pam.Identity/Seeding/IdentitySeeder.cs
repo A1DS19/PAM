@@ -178,6 +178,8 @@ public sealed class IdentitySeeder(
                 OidcPermissions.Endpoints.Authorization,
                 OidcPermissions.Endpoints.EndSession,
                 OidcPermissions.Endpoints.Token,
+                OidcPermissions.Endpoints.Revocation,
+                OidcPermissions.Endpoints.Introspection,
                 OidcPermissions.Endpoints.PushedAuthorization,
                 OidcPermissions.GrantTypes.AuthorizationCode,
                 OidcPermissions.GrantTypes.RefreshToken,

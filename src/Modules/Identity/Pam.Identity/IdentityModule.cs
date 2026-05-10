@@ -8,6 +8,7 @@ using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
 using Pam.Identity.Authentication;
 using Pam.Identity.Data;
+using Pam.Identity.Email;
 using Pam.Identity.Permissions;
 using Pam.Identity.Seeding;
 using Pam.Identity.Users.Models;
@@ -80,6 +81,12 @@ public static class IdentityModule
             .Bind(configuration.GetSection(BackOfficeSpaOptions.SectionName))
             .ValidateOnStart();
 
+        services
+            .AddOptions<SmtpOptions>()
+            .Bind(configuration.GetSection(SmtpOptions.SectionName))
+            .ValidateOnStart();
+
+        services.AddScoped<IEmailSender, SmtpEmailSender>();
         services.AddScoped<PermissionResolver>();
         services.AddScoped<IdentitySeeder>();
 
@@ -173,7 +180,9 @@ public static class IdentityModule
                     .SetEndSessionEndpointUris("connect/logout")
                     .SetTokenEndpointUris("connect/token")
                     .SetUserInfoEndpointUris("connect/userinfo")
-                    .SetPushedAuthorizationEndpointUris("connect/par");
+                    .SetPushedAuthorizationEndpointUris("connect/par")
+                    .SetRevocationEndpointUris("connect/revocation")
+                    .SetIntrospectionEndpointUris("connect/introspect");
 
                 // Standard OIDC scopes plus our API audience scope. Clients
                 // requesting `pam_api` get an access token whose `aud`
@@ -223,11 +232,18 @@ public static class IdentityModule
             .AddValidation(options =>
             {
                 // Same host as the server — keys + scopes imported in-process.
-                // No HTTP introspection round-trip; revocation visibility is
-                // bounded by token TTL until Limits ships and we enable
-                // EnableAuthorizationEntryValidation here.
+                // No HTTP introspection round-trip.
                 options.UseLocalServer();
                 options.UseAspNetCore();
+
+                // Each API call cross-checks the access token's authorization
+                // record. Revoking the authorization entry (via /connect/
+                // revocation or by deleting it directly) makes the token fail
+                // at the next request instead of waiting for the security
+                // stamp validation window. Cheap because it's an in-process
+                // lookup, not an HTTP introspection hop.
+                options.EnableAuthorizationEntryValidation();
+                options.EnableTokenEntryValidation();
             });
 
         services
