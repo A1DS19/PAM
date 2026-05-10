@@ -6,11 +6,13 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
+using Pam.Identity.Authentication;
 using Pam.Identity.Data;
 using Pam.Identity.Permissions;
 using Pam.Identity.Seeding;
 using Pam.Identity.Users.Models;
 using Pam.Shared.Data.Interceptors;
+using Pam.Shared.Security;
 using Quartz;
 using static OpenIddict.Abstractions.OpenIddictConstants;
 
@@ -34,6 +36,13 @@ public static class IdentityModule
 
         services.TryAddScoped<AuditableSaveChangesInterceptor>();
         services.TryAddScoped<DispatchDomainEventsInterceptor>();
+
+        // Replace Pam.Shared's default SystemUserContext with one that reads
+        // the authenticated principal — audit columns now distinguish
+        // background work (Actor.System) from operator-driven mutations
+        // (Actor.Operator with the OIDC `sub` claim).
+        services.RemoveAll<IUserContext>();
+        services.AddScoped<IUserContext, HttpUserContext>();
 
         services.AddDbContext<IdentityDbContext>(
             (sp, options) =>

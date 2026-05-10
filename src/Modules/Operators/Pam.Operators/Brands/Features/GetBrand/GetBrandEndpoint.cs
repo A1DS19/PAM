@@ -3,6 +3,7 @@ using MediatR;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
+using Pam.Identity.Contracts.Permissions;
 using Pam.Operators.Contracts.Brands.Dtos;
 using Pam.Operators.Contracts.Brands.Queries;
 
@@ -23,7 +24,9 @@ public sealed class GetBrandEndpoint : ICarterModule
             .WithTags("Operators")
             .WithName("GetBrand")
             .Produces<BrandDto>(StatusCodes.Status200OK)
+            .ProducesProblem(StatusCodes.Status401Unauthorized)
+            .ProducesProblem(StatusCodes.Status403Forbidden)
             .ProducesProblem(StatusCodes.Status404NotFound)
-            .AllowAnonymous();
+            .RequireAuthorization($"Permissions.{PermissionCodes.Operators.BrandsRead}");
     }
 }
