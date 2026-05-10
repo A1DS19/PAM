@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Pam.Notifications.Contracts</RootNamespace>
+    <AssemblyName>Pam.Notifications.Contracts</AssemblyName>
+  </PropertyGroup>
+
+</Project>

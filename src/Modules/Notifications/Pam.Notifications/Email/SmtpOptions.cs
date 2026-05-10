@@ -1,11 +1,11 @@
-namespace Pam.Identity.Email;
+namespace Pam.Notifications.Email;
 
-// Bound from `Identity:Smtp` in appsettings.{env}.json. Defaults target
-// Mailpit at localhost:1025 (no TLS, no auth). Production overrides via
-// env vars: Identity__Smtp__Host=… , Identity__Smtp__Port=… , etc.
-public sealed class SmtpOptions
+// Bound from `Notifications:Smtp` in appsettings.{env}.json. Defaults
+// target Mailpit at localhost:1025 (no TLS, no auth). Production
+// overrides via env vars: Notifications__Smtp__Host=… , etc.
+internal sealed class SmtpOptions
 {
-    public const string SectionName = "Identity:Smtp";
+    public const string SectionName = "Notifications:Smtp";
 
     public string Host { get; init; } = "localhost";
 

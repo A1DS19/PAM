@@ -3,13 +3,15 @@ using MailKit.Security;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using MimeKit;
+using Pam.Notifications.Contracts.Email;
 
-namespace Pam.Identity.Email;
+namespace Pam.Notifications.Email;
 
 // MailKit-over-SMTP sender. Defaults wired for the Mailpit dev container
-// (plain TCP, no TLS, no auth). Production sets Identity:Smtp:Host +
-// :UseStartTls=true + credentials via env vars; the same impl carries over.
-public sealed class SmtpEmailSender(
+// (plain TCP, no TLS, no auth). Production sets Notifications:Smtp:Host
+// + :UseStartTls=true + credentials via env vars; the same impl carries
+// over. Internal: callers go through IEmailSender, not this class.
+internal sealed class SmtpEmailSender(
     IOptions<SmtpOptions> options,
     ILogger<SmtpEmailSender> logger
 ) : IEmailSender

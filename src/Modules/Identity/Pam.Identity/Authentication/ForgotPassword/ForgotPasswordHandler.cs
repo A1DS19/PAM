@@ -1,8 +1,8 @@
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.WebUtilities;
 using Microsoft.Extensions.Options;
-using Pam.Identity.Email;
 using Pam.Identity.Users.Models;
+using Pam.Notifications.Contracts.Email;
 using Pam.Shared.Contracts.CQRS;
 
 namespace Pam.Identity.Authentication.ForgotPassword;

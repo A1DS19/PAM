@@ -10,6 +10,7 @@ using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Pam.Identity;
 using Pam.Identity.Contracts.Permissions;
+using Pam.Notifications;
 using Pam.Operators;
 using Pam.Shared.Exceptions.Handlers;
 using Pam.Shared.Extensions;
@@ -33,14 +34,28 @@ builder.Host.UseSerilog(
             .Enrich.WithProperty("env", ctx.HostingEnvironment.EnvironmentName)
 );
 
-var moduleAssemblies = new[] { typeof(IdentityModule).Assembly, typeof(OperatorsModule).Assembly };
+var moduleAssemblies = new[]
+{
+    typeof(IdentityModule).Assembly,
+    typeof(NotificationsModule).Assembly,
+    typeof(OperatorsModule).Assembly,
+};
 
 builder.Services.AddPamShared();
 builder.Services.AddPamMediatR(moduleAssemblies);
-builder.Services.AddPamMassTransit(builder.Configuration);
+// Consumer assemblies for MassTransit auto-discovery — Pam.Notifications
+// houses the integration-event subscribers (welcome emails, transactional
+// receipts, ...). Pam.Identity/Pam.Operators don't consume events yet.
+builder.Services.AddPamMassTransit(
+    builder.Configuration,
+    typeof(NotificationsModule).Assembly
+);
 
 builder.Services.AddHttpContextAccessor();
 
+// Notifications first — Identity's forgot-password / send-confirmation-email
+// handlers resolve IEmailSender from Notifications during DI graph building.
+builder.Services.AddNotificationsModule(builder.Configuration);
 builder.Services.AddIdentityModule(builder.Configuration);
 builder.Services.AddOperatorsModule(builder.Configuration);
 

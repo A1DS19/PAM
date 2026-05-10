@@ -7,6 +7,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\Modules\Identity\Pam.Identity\Pam.Identity.csproj" />
+    <ProjectReference Include="..\..\Modules\Notifications\Pam.Notifications\Pam.Notifications.csproj" />
     <ProjectReference Include="..\..\Modules\Operators\Pam.Operators\Pam.Operators.csproj" />
     <ProjectReference Include="..\..\Shared\Pam.Shared\Pam.Shared.csproj" />
     <ProjectReference Include="..\..\Shared\Pam.Shared.Messaging\Pam.Shared.Messaging.csproj" />

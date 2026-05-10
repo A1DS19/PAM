@@ -18,10 +18,14 @@ returning as module #3.
 3. **Module #4 — `Pam.Wallet`** (double-entry ledger). Outbox is
    non-negotiable from day one of that module. See
    [the build order](#modules-not-yet-built) below.
-4. **`Pam.Notifications` as a real module** — lift `IEmailSender` out of
-   `Pam.Identity` once a second module needs to send mail (Players
-   welcome emails, deposit confirmations, etc.). Add SMS + push when the
-   first trigger arrives.
+4. **`Pam.Notifications` expansion** — module skeleton +
+   `IEmailSender` are in place (`Pam.Notifications` +
+   `Pam.Notifications.Contracts`). Still to come: integration-event
+   consumers (the `Consumers/` folder is empty, waiting for Players to
+   publish), templating + locale resolution, send-audit-log DbContext,
+   SMS + push transports. Each piece lands when the first consumer
+   needs it. See *Notifications and cross-module email* in
+   ARCHITECTURE.md for the pattern.
 
 ## Deferred — pinned, will land when triggered
 

@@ -12,6 +12,10 @@
     <Project Path="src/Modules/Identity/Pam.Identity.Contracts/Pam.Identity.Contracts.csproj" />
     <Project Path="src/Modules/Identity/Pam.Identity/Pam.Identity.csproj" />
   </Folder>
+  <Folder Name="/src/Modules/Notifications/">
+    <Project Path="src/Modules/Notifications/Pam.Notifications.Contracts/Pam.Notifications.Contracts.csproj" />
+    <Project Path="src/Modules/Notifications/Pam.Notifications/Pam.Notifications.csproj" />
+  </Folder>
   <Folder Name="/src/Shared/">
     <Project Path="src/Shared/Pam.Shared.Contracts/Pam.Shared.Contracts.csproj" />
     <Project Path="src/Shared/Pam.Shared.Messaging/Pam.Shared.Messaging.csproj" />

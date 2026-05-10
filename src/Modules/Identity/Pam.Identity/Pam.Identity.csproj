@@ -11,6 +11,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Pam.Identity.Contracts\Pam.Identity.Contracts.csproj" />
+    <ProjectReference Include="..\..\Notifications\Pam.Notifications.Contracts\Pam.Notifications.Contracts.csproj" />
     <ProjectReference Include="..\..\..\Shared\Pam.Shared\Pam.Shared.csproj" />
     <ProjectReference Include="..\..\..\Shared\Pam.Shared.Messaging\Pam.Shared.Messaging.csproj" />
   </ItemGroup>
@@ -34,7 +35,6 @@
     <PackageReference Include="OpenIddict.EntityFrameworkCore" />
     <PackageReference Include="OpenIddict.Quartz" />
     <PackageReference Include="Quartz.Extensions.Hosting" />
-    <PackageReference Include="MailKit" />
   </ItemGroup>
 
 </Project>

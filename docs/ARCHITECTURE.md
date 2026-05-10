@@ -322,6 +322,75 @@ mostly for genuinely long-running operations the user explicitly
 initiated (a CSV import). It's almost never the right call for a user
 action with a yes/no decision behind it.
 
+## Notifications and cross-module email
+
+`Pam.Notifications` is the only module that owns an SMTP gateway
+(`IEmailSender` + the MailKit-backed `SmtpEmailSender`). The interface
+ships in `Pam.Notifications.Contracts`; every other module that needs
+to send mail injects it from there. Two paths into the gateway, used
+for different shapes of need:
+
+### Path 1 — direct `IEmailSender.SendAsync(...)`
+
+Use this when the **publisher owns the content** AND **the payload is
+sensitive enough that putting it on the broker is a bad idea**.
+
+Concrete example: `Pam.Identity`'s `ForgotPasswordHandler` calls
+`IEmailSender` directly. The handler has the user, generates the reset
+token, embeds it in the link, and sends — all inside one transaction.
+The token IS the credential. Putting it in a `PasswordResetRequested-
+IntegrationEvent` would fan it out to every consumer's logs, the outbox
+table, the audit trail, and any future regulatory-audit subscriber. That
+isn't acceptable for a thing that grants access to an account.
+
+The other intra-module sends in Identity (email confirmation, MFA admin
+reset notifications when those land) follow the same pattern.
+
+### Path 2 — publish a fact-shaped integration event
+
+Use this for **cross-module** flows where the originating module
+*shouldn't* know the template, the recipient's locale, the brand
+styling, or even whether an email is the right channel.
+
+```
+Pam.Players  ──publish──▶  PlayerRegisteredIntegrationEvent(PlayerId, BrandId)
+                                              │
+                                         (RabbitMQ)
+                                              │
+Pam.Notifications  ──consume──▶  PlayerRegisteredEmailConsumer
+                                  ├─ query Pam.Players.Contracts.IPlayerLookup
+                                  │     for email + locale + display name
+                                  ├─ pick template for (brand, locale)
+                                  ├─ render
+                                  └─ IEmailSender.SendAsync(...)
+```
+
+The event is lean (just IDs). The consumer in `Pam.Notifications/
+Consumers/` decides whether to send, picks the template, renders it,
+and calls `IEmailSender`. This is the right shape for: Players welcome
+email, Wallet deposit confirmation, Bonuses awarded, KYC verified,
+suspicious-login alerts, etc.
+
+### Why split this way
+
+If every module imported `IEmailSender` and inlined templates, you'd
+end up with:
+- Email body wording scattered across N modules.
+- Per-brand branding duplicated everywhere.
+- Locale resolution duplicated everywhere.
+- Compliance review needing to audit N modules instead of 1.
+
+Funneling cross-cutting "we observed X, the user should probably be
+told" through integration events keeps all template + branding +
+delivery policy in one place — `Pam.Notifications`. The originating
+module just describes what happened.
+
+The two-path split is the same architectural principle that makes
+integration events fact-shaped (see *Integration events describe what
+happened, not what to do* above). The direct-call path is the carved-out
+exception for "the publisher genuinely does own the content because it
+owns the secret."
+
 ## Aggregate sizing rules
 
 Three rules, repeat in code review:
