@@ -1,3 +1,4 @@
+using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Identity;
@@ -209,13 +210,43 @@ public static class IdentityModule
                 // interception even for confidential clients.
                 options.RequireProofKeyForCodeExchange();
 
-                // Dev: persisted self-signed certs in the user store, reused
-                // across restarts. Prod: AddSigningCertificate(thumbprint) +
-                // AddEncryptionCertificate(thumbprint) from env-injected
-                // certificates (separate from HTTPS cert). See ROADMAP.
-                options
-                    .AddDevelopmentEncryptionCertificate()
-                    .AddDevelopmentSigningCertificate();
+                // Dev: persisted self-signed certs in the user store. Reused
+                // across restarts on the same machine; not shared across
+                // replicas (each gets its own keypair). Acceptable because
+                // we don't run multi-instance in dev.
+                //
+                // Non-dev: certs are loaded from PFX files mounted by the
+                // orchestrator (k8s Secret-as-file, systemd LoadCredential=,
+                // Swarm secret). Sharing the same PFX across replicas is what
+                // makes a token signed by replica A validate on replica B —
+                // and what keeps tokens valid across rolling deploys.
+                //
+                // Rotation strategy: keep the previous cert in
+                // OpenIddict:Validation:IssuerSigningKeys for one release so
+                // tokens issued before rotation still validate. Then drop it.
+                if (environment.IsDevelopment())
+                {
+                    options
+                        .AddDevelopmentEncryptionCertificate()
+                        .AddDevelopmentSigningCertificate();
+                }
+                else
+                {
+                    options.AddEncryptionCertificate(
+                        LoadCertificate(
+                            configuration,
+                            "OpenIddict:EncryptionCertificate",
+                            "encryption"
+                        )
+                    );
+                    options.AddSigningCertificate(
+                        LoadCertificate(
+                            configuration,
+                            "OpenIddict:SigningCertificate",
+                            "signing"
+                        )
+                    );
+                }
 
                 // ASP.NET Core integration. Endpoint pass-through hands the
                 // request off to our AuthorizationController / endpoints
@@ -306,5 +337,38 @@ public static class IdentityModule
         var accept = request.Headers.Accept.ToString();
         return accept.Contains("application/json", StringComparison.OrdinalIgnoreCase)
             && !accept.Contains("text/html", StringComparison.OrdinalIgnoreCase);
+    }
+
+    // Load a PFX from a path configured under OpenIddict:<role>:Path with an
+    // optional password under :Password. Fail-fast at startup with a clear
+    // error if the path is unset or the file is missing — silently falling
+    // back to ephemeral keys in non-dev would cause every replica to sign
+    // with its own keypair and break auth in subtle ways.
+    private static X509Certificate2 LoadCertificate(
+        IConfiguration configuration,
+        string sectionName,
+        string role
+    )
+    {
+        var section = configuration.GetSection(sectionName);
+        var path =
+            section["Path"]
+            ?? throw new InvalidOperationException(
+                $"{sectionName}:Path is required outside Development. "
+                    + $"Mount the {role} PFX and point this config at it "
+                    + "(or run the host as Development to use self-signed dev certs)."
+            );
+        if (!File.Exists(path))
+        {
+            throw new InvalidOperationException(
+                $"{sectionName}:Path points at '{path}' which does not exist."
+            );
+        }
+        var password = section["Password"];
+        return X509CertificateLoader.LoadPkcs12FromFile(
+            path,
+            password,
+            X509KeyStorageFlags.MachineKeySet | X509KeyStorageFlags.PersistKeySet
+        );
     }
 }

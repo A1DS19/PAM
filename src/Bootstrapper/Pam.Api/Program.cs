@@ -1,6 +1,7 @@
 using System.Threading.RateLimiting;
 using Carter;
 using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.AspNetCore.RateLimiting;
@@ -10,6 +11,7 @@ using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Pam.Identity;
 using Pam.Identity.Contracts.Permissions;
+using Pam.Identity.Data;
 using Pam.Notifications;
 using Pam.Operators;
 using Pam.Shared.Exceptions.Handlers;
@@ -58,6 +60,23 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddNotificationsModule(builder.Configuration);
 builder.Services.AddIdentityModule(builder.Configuration, builder.Environment);
 builder.Services.AddOperatorsModule(builder.Configuration);
+
+// Data Protection master keyring → IdentityDbContext.DataProtectionKeys.
+// Without this, each replica generates its own keyring under the local
+// user profile; cookies + OpenIddict state strings issued by replica A
+// fail to validate on replica B, and rolling deploys invalidate every
+// session. ApplicationName isolates keys across environments sharing a
+// database (don't share keys between staging and prod).
+//
+// IdentityModule registers IdentityDbContext above; this hook resolves
+// the same registration. AddIdentityModule must run before this line.
+var dataProtectionApplicationName =
+    builder.Configuration["DataProtection:ApplicationName"]
+    ?? $"pam-api/{builder.Environment.EnvironmentName}";
+builder
+    .Services.AddDataProtection()
+    .SetApplicationName(dataProtectionApplicationName)
+    .PersistKeysToDbContext<IdentityDbContext>();
 
 builder.Services.AddCarter(new DependencyContextAssemblyCatalog(moduleAssemblies));
 

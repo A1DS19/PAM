@@ -208,6 +208,25 @@ replaces it).
   Adding the filter retroactively across N modules is N migrations and
   N code reviews; doing it once at module-#3-start is one PR.
 
+### Shared signing material + DP keys — SHIPPED
+
+Two pieces that have to be in place before a second replica can serve
+traffic alongside the first:
+
+- **Data Protection master keyring** persists to `identity.data_protection_keys`
+  via `IDataProtectionKeyContext` on `IdentityDbContext`. Cookies +
+  OpenIddict state strings issued by one replica validate on another.
+  `SetApplicationName(...)` isolates keys across environments sharing a
+  database (`pam-api/Development` ≠ `pam-api/Production`).
+- **OpenIddict signing + encryption certificates** load from PFX files
+  configured under `OpenIddict:{Signing,Encryption}Certificate:{Path,Password}`
+  in non-Development. Mount the same PFX into every replica; rotate by
+  swapping the file and rolling restarts. Development keeps the persisted
+  self-signed certs from `AddDevelopment{Signing,Encryption}Certificate`.
+
+Without either of these, tokens and cookies become per-instance state and
+N>1 replicas can't share user sessions.
+
 ### Distributed rate limiter
 
 - **What**: replace the in-memory `auth-sensitive` policy with a

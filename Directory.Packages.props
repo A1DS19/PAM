@@ -71,6 +71,13 @@
     <PackageVersion Include="OpenIddict.Quartz" Version="7.5.0" />
     <PackageVersion Include="Quartz.Extensions.Hosting" Version="3.18.1" />
     <PackageVersion Include="Microsoft.AspNetCore.Identity.EntityFrameworkCore" Version="10.0.7" />
+    <!--
+      Persists Data Protection master keys to IdentityDbContext so cookies +
+      OpenIddict device codes / state strings issued by replica A validate
+      on replica B. Without this every replica generates its own keyring
+      under the user profile and authentication breaks across instances.
+    -->
+    <PackageVersion Include="Microsoft.AspNetCore.DataProtection.EntityFrameworkCore" Version="10.0.7" />
   </ItemGroup>
 
   <ItemGroup Label="Observability">
