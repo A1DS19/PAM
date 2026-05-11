@@ -36,5 +36,6 @@
     <Project Path="tests/Pam.ArchitectureTests/Pam.ArchitectureTests.csproj" />
     <Project Path="tests/Pam.Players.UnitTests/Pam.Players.UnitTests.csproj" />
     <Project Path="tests/Pam.Wallet.UnitTests/Pam.Wallet.UnitTests.csproj" />
+    <Project Path="tests/Pam.Shared.UnitTests/Pam.Shared.UnitTests.csproj" />
   </Folder>
 </Solution>

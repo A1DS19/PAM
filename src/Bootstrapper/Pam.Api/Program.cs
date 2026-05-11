@@ -201,6 +201,7 @@ redisOptions.AbortOnConnectFail = false;
 redisOptions.ClientName = "pam-api";
 var redis = await ConnectionMultiplexer.ConnectAsync(redisOptions);
 builder.Services.AddSingleton<IConnectionMultiplexer>(redis);
+builder.Services.AddPamCaching();
 
 builder.Services.AddRateLimiter(o =>
 {
