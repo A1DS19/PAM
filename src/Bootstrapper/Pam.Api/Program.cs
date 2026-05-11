@@ -17,8 +17,10 @@ using Pam.Operators;
 using Pam.Shared.Exceptions.Handlers;
 using Pam.Shared.Extensions;
 using Pam.Shared.Messaging.Extensions;
+using RedisRateLimiting;
 using Scalar.AspNetCore;
 using Serilog;
+using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -45,13 +47,11 @@ var moduleAssemblies = new[]
 
 builder.Services.AddPamShared();
 builder.Services.AddPamMediatR(moduleAssemblies);
+
 // Consumer assemblies for MassTransit auto-discovery — Pam.Notifications
 // houses the integration-event subscribers (welcome emails, transactional
 // receipts, ...). Pam.Identity/Pam.Operators don't consume events yet.
-builder.Services.AddPamMassTransit(
-    builder.Configuration,
-    typeof(NotificationsModule).Assembly
-);
+builder.Services.AddPamMassTransit(builder.Configuration, typeof(NotificationsModule).Assembly);
 
 builder.Services.AddHttpContextAccessor();
 
@@ -168,6 +168,21 @@ builder.Services.Configure<ForwardedHeadersOptions>(options =>
     options.KnownProxies.Clear();
 });
 
+// Single shared multiplexer — StackExchange.Redis is thread-safe and
+// reconnects internally. AbortConnect=false lets the API boot even when
+// Redis is briefly unreachable; the multiplexer retries on each command.
+// Rate-limited endpoints will still surface a 5xx if Redis stays down,
+// which is intentional — the alternative is "no rate limit on /login",
+// which is worse than a brief outage.
+var redisConnectionString =
+    builder.Configuration.GetConnectionString("Redis")
+    ?? throw new InvalidOperationException("ConnectionStrings:Redis is not configured");
+var redisOptions = ConfigurationOptions.Parse(redisConnectionString);
+redisOptions.AbortOnConnectFail = false;
+redisOptions.ClientName = "pam-api";
+var redis = await ConnectionMultiplexer.ConnectAsync(redisOptions);
+builder.Services.AddSingleton<IConnectionMultiplexer>(redis);
+
 builder.Services.AddRateLimiter(o =>
 {
     o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -195,16 +210,23 @@ builder.Services.AddRateLimiter(o =>
         return $"ip:{ip}";
     }
 
+    // Redis-backed partitions — replicas share the count via a sorted set
+    // (sliding) or atomic INCR+EXPIRE (fixed window). Same policy shape as
+    // the previous in-memory limiters, but enforcement is global.
+    //
+    // Note: RedisSlidingWindowRateLimiter doesn't take SegmentsPerWindow —
+    // it implements the textbook sliding window via a sorted set keyed by
+    // request timestamp, which is more accurate than segmented buckets.
     o.AddPolicy(
         "auth-sensitive",
         ctx =>
-            RateLimitPartition.GetFixedWindowLimiter(
+            RedisRateLimitPartition.GetFixedWindowRateLimiter(
                 ClientPartitionKey(ctx),
-                _ => new FixedWindowRateLimiterOptions
+                _ => new RedisFixedWindowRateLimiterOptions
                 {
+                    ConnectionMultiplexerFactory = () => redis,
                     Window = TimeSpan.FromMinutes(1),
                     PermitLimit = 5,
-                    QueueLimit = 0,
                 }
             )
     );
@@ -212,14 +234,13 @@ builder.Services.AddRateLimiter(o =>
     o.AddPolicy(
         "api-default",
         ctx =>
-            RateLimitPartition.GetSlidingWindowLimiter(
+            RedisRateLimitPartition.GetSlidingWindowRateLimiter(
                 ClientPartitionKey(ctx),
-                _ => new SlidingWindowRateLimiterOptions
+                _ => new RedisSlidingWindowRateLimiterOptions
                 {
+                    ConnectionMultiplexerFactory = () => redis,
                     Window = TimeSpan.FromSeconds(30),
-                    SegmentsPerWindow = 6,
                     PermitLimit = 100,
-                    QueueLimit = 0,
                 }
             )
     );
@@ -290,7 +311,13 @@ builder
             .AddOtlpExporter()
     );
 
-builder.Services.AddHealthChecks();
+builder
+    .Services.AddHealthChecks()
+    .AddRedis(
+        sp => sp.GetRequiredService<IConnectionMultiplexer>(),
+        name: "redis",
+        tags: ["ready", "infra:redis"]
+    );
 
 var app = builder.Build();
 

@@ -227,13 +227,22 @@ traffic alongside the first:
 Without either of these, tokens and cookies become per-instance state and
 N>1 replicas can't share user sessions.
 
-### Distributed rate limiter
+### Distributed rate limiter — SHIPPED
 
-- **What**: replace the in-memory `auth-sensitive` policy with a
-  Redis-backed one (`RedisRateLimiting` package or similar).
-- **Trigger**: running multiple Pam.Api replicas. Until then the
-  in-memory limiter is enough — the embedded OpenIddict server's
-  brute-force protection layers on top.
+The `auth-sensitive` and `api-default` policies now use the
+`RedisRateLimiting` package (cristipufu) instead of the in-memory
+limiters. A single `IConnectionMultiplexer` registered as a DI singleton
+backs both — `RedisFixedWindowRateLimiter` for `auth-sensitive`,
+`RedisSlidingWindowRateLimiter` for `api-default`.
+
+Failure mode: `AbortOnConnectFail=false` so a brief Redis outage doesn't
+prevent boot, but rate-limited endpoints surface 5xx while Redis is
+unreachable. Intentional — fail-open on `/login` is worse than a brief
+outage. Health check (`identity-db`, `redis`) catches it.
+
+Sliding-window semantics changed slightly: the Redis impl uses a sorted
+set keyed by request timestamp (textbook sliding window), not segmented
+buckets, so `SegmentsPerWindow` is gone. More accurate, not a regression.
 
 ### OTLP exporter + collector — SHIPPED
 
