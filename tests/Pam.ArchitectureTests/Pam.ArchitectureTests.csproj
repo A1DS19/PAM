@@ -8,9 +8,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\src\Modules\Audit\Pam.Audit\Pam.Audit.csproj" />
     <ProjectReference Include="..\..\src\Modules\Operators\Pam.Operators\Pam.Operators.csproj" />
     <ProjectReference Include="..\..\src\Modules\Identity\Pam.Identity\Pam.Identity.csproj" />
     <ProjectReference Include="..\..\src\Modules\Notifications\Pam.Notifications\Pam.Notifications.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Players\Pam.Players\Pam.Players.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Wallet\Pam.Wallet\Pam.Wallet.csproj" />
     <ProjectReference Include="..\..\src\Shared\Pam.Shared\Pam.Shared.csproj" />
   </ItemGroup>
 

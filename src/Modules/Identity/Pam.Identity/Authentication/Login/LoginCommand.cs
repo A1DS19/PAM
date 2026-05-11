@@ -1,9 +1,13 @@
+using Pam.Shared.Contracts.Audit;
 using Pam.Shared.Contracts.CQRS;
 
 namespace Pam.Identity.Authentication.Login;
 
-public sealed record LoginCommand(string Email, string Password, bool RememberMe)
-    : ICommand<LoginResult>;
+public sealed record LoginCommand(
+    string Email,
+    [property: Sensitive] string Password,
+    bool RememberMe
+) : ICommand<LoginResult>;
 
 // LoginResult discriminates between failure modes so the endpoint can map to
 // the right HTTP status. RequiresTwoFactor will land in PR 2 with the MFA

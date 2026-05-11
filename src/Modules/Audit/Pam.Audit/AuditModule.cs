@@ -25,10 +25,7 @@ public static class AuditModule
                     connectionString,
                     npg =>
                     {
-                        npg.MigrationsHistoryTable(
-                            "__EFMigrationsHistory",
-                            AuditDbContext.Schema
-                        );
+                        npg.MigrationsHistoryTable("__EFMigrationsHistory", AuditDbContext.Schema);
                         npg.MigrationsAssembly(typeof(AuditDbContext).Assembly.FullName);
                     }
                 );
