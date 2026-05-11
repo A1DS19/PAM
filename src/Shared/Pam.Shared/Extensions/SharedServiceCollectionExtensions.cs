@@ -3,6 +3,8 @@ using FluentValidation;
 using MediatR;
 using Microsoft.Extensions.DependencyInjection;
 using Pam.Shared.Behaviors;
+using Pam.Shared.Caching;
+using Pam.Shared.Contracts.Caching;
 using Pam.Shared.Security;
 using Pam.Shared.Time;
 
@@ -27,9 +29,18 @@ public static class SharedServiceCollectionExtensions
             cfg.RegisterServicesFromAssemblies(assemblies);
             cfg.AddOpenBehavior(typeof(LoggingBehavior<,>));
             cfg.AddOpenBehavior(typeof(ValidationBehavior<,>));
+            // Caching runs after validation so invalid requests never poison
+            // the cache, and so cache hits/misses still show up in log timings.
+            cfg.AddOpenBehavior(typeof(CachingBehavior<,>));
         });
 
         services.AddValidatorsFromAssemblies(assemblies);
+        return services;
+    }
+
+    public static IServiceCollection AddPamCaching(this IServiceCollection services)
+    {
+        services.AddSingleton<ICacheService, RedisCacheService>();
         return services;
     }
 

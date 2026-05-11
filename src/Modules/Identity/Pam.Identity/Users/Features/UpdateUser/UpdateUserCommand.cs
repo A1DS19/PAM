@@ -1,3 +1,4 @@
+using Pam.Shared.Contracts.Caching;
 using Pam.Shared.Contracts.CQRS;
 
 namespace Pam.Identity.Users.Features.UpdateUser;
@@ -8,6 +9,7 @@ namespace Pam.Identity.Users.Features.UpdateUser;
 // brands lands as a dedicated endpoint when a customer asks. Status flags
 // (EmailConfirmed, TwoFactorEnabled) are mutated by their own endpoints
 // (confirm-email, mfa/enroll) because they have side effects.
+[InvalidateCache("identity:user:*", "identity:users:list:*")]
 public sealed record UpdateUserCommand(
     Guid UserId,
     string? Email,
