@@ -22,6 +22,31 @@ public sealed class ChangePasswordEndpoint : ICarterModule
             )
             .WithTags("Identity")
             .WithName("ChangePassword")
+            .WithSummary("Change the current user's password")
+            .WithDescription(
+                """
+                Lets the signed-in user rotate their own password by supplying
+                their current password and a new one. The Identity password
+                policy (length, complexity, history) is enforced server-side.
+
+                **Auth:** any authenticated back-office user — no extra
+                permission required. Rate-limited by the `auth-sensitive`
+                policy.
+
+                **Side effects:** rotates the user's security stamp, which
+                invalidates all other sessions and refresh tokens on success.
+
+                **Status codes:**
+                - `204 No Content` — password changed; current session remains
+                  valid, all other sessions revoked.
+                - `400 Bad Request` — validation failure (missing fields).
+                - `401 Unauthorized` — caller is not signed in or the supplied
+                  current password is wrong.
+                - `422 Unprocessable Entity` — new password violates Identity
+                  policy (too short, reuses recent history, etc.).
+                - `429 Too Many Requests` — rate-limited.
+                """
+            )
             .Produces(StatusCodes.Status204NoContent)
             .ProducesValidationProblem()
             .ProducesProblem(StatusCodes.Status401Unauthorized)

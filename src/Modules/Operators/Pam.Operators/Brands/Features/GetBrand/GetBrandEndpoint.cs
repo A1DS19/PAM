@@ -23,6 +23,21 @@ public sealed class GetBrandEndpoint : ICarterModule
             )
             .WithTags("Operators")
             .WithName("GetBrand")
+            .WithSummary("Get a brand by id")
+            .WithDescription(
+                """
+                Returns the full `BrandDto` (id, name, slug, jurisdiction,
+                timestamps) for the brand identified by the route id.
+
+                **Auth:** requires `operators.brands.read` permission.
+
+                **Status codes:**
+                - `200 OK` — brand payload returned.
+                - `401 Unauthorized` / `403 Forbidden` — auth failed or caller
+                  lacks `operators.brands.read`.
+                - `404 Not Found` — no brand exists with that id.
+                """
+            )
             .Produces<BrandDto>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)

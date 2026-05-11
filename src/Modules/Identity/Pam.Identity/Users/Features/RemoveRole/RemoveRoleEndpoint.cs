@@ -21,6 +21,30 @@ public sealed class RemoveRoleEndpoint : ICarterModule
             )
             .WithTags("Identity")
             .WithName("RemoveRole")
+            .WithSummary("Remove a role from a user")
+            .WithDescription(
+                """
+                Removes the named role from the target user. The role name is
+                taken from the route.
+
+                **Auth:** requires `identity.roles.write` permission.
+
+                **Idempotency:** idempotent — removing a role the user does
+                not have succeeds with `204 No Content`.
+
+                **Side effects:** future requests from the user lose the
+                permission claims granted by that role; existing sessions
+                retain their claim set until refresh.
+
+                **Status codes:**
+                - `204 No Content` — role removed (or already absent).
+                - `401 Unauthorized` / `403 Forbidden` — auth failed or caller
+                  lacks `identity.roles.write`.
+                - `404 Not Found` — no user with that id.
+                - `422 Unprocessable Entity` — removal blocked by policy
+                  (e.g. removing the last Owner role).
+                """
+            )
             .Produces(StatusCodes.Status204NoContent)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)

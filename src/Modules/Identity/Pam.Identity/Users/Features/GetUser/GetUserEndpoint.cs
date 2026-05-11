@@ -22,6 +22,22 @@ public sealed class GetUserEndpoint : ICarterModule
             )
             .WithTags("Identity")
             .WithName("GetUser")
+            .WithSummary("Get a back-office user by id")
+            .WithDescription(
+                """
+                Returns the full `BackOfficeUserDto` (id, email, brand, roles,
+                lockout state, MFA state, timestamps) for the user identified
+                by the route id.
+
+                **Auth:** requires `identity.users.read` permission.
+
+                **Status codes:**
+                - `200 OK` — user payload returned.
+                - `401 Unauthorized` / `403 Forbidden` — auth failed or caller
+                  lacks `identity.users.read`.
+                - `404 Not Found` — no user exists with that id.
+                """
+            )
             .Produces<BackOfficeUserDto>(StatusCodes.Status200OK)
             .ProducesProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status403Forbidden)

@@ -166,6 +166,23 @@ Validation errors flow through FluentValidation and become
 
 Every response includes a `traceId` (W3C Activity ID) for support correlation.
 
+## Endpoint annotations
+
+Every Carter endpoint follows a single annotation pattern so Scalar
+renders rich cards (summary, full description, request/response
+schemas, every possible status code). The reference shape lives in
+[`ENDPOINTS.md`](ENDPOINTS.md); the machine-enforced version is the
+endpoint-conventions section of [`CLAUDE.md`](../CLAUDE.md).
+
+The mandatory chain: `WithTags` → `WithName` → `WithSummary` →
+`WithDescription` (markdown) → `Accepts<T>` (for body) → typed
+`Produces<T>` → every `ProducesProblem` the endpoint can actually
+return → auth / rate-limit.
+
+Anti-patterns blocked by code review: anonymous response types,
+private nested request DTOs, declaring status codes the endpoint can't
+produce.
+
 ## Time
 
 `DateTimeOffset` everywhere, stored as `timestamptz`. `IClock` interface (with

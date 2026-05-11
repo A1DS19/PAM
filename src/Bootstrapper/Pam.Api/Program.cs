@@ -13,6 +13,7 @@ using Pam.Audit;
 using Pam.Identity;
 using Pam.Identity.Contracts.Permissions;
 using Pam.Identity.Data;
+using Pam.Ingest;
 using Pam.Notifications;
 using Pam.Operators;
 using Pam.Players;
@@ -45,6 +46,7 @@ builder.Host.UseSerilog(
 var moduleAssemblies = new[]
 {
     typeof(IdentityModule).Assembly,
+    typeof(IngestModule).Assembly,
     typeof(NotificationsModule).Assembly,
     typeof(OperatorsModule).Assembly,
     typeof(PlayersModule).Assembly,
@@ -67,6 +69,7 @@ builder.Services.AddPamMassTransit(
     {
         OperatorsModule.ConfigureOutbox(bus);
         WalletModule.ConfigureOutbox(bus);
+        IngestModule.ConfigureOutbox(bus);
     },
     typeof(NotificationsModule).Assembly
 );
@@ -81,6 +84,7 @@ builder.Services.AddOperatorsModule(builder.Configuration);
 builder.Services.AddPlayersModule(builder.Configuration);
 builder.Services.AddWalletModule(builder.Configuration);
 builder.Services.AddAuditModule(builder.Configuration);
+builder.Services.AddIngestModule(builder.Configuration);
 
 // Data Protection master keyring → IdentityDbContext.DataProtectionKeys.
 // Without this, each replica generates its own keyring under the local
@@ -384,6 +388,7 @@ await app.Services.UseOperatorsModuleAsync();
 await app.Services.UsePlayersModuleAsync();
 await app.Services.UseWalletModuleAsync();
 await app.Services.UseAuditModuleAsync();
+await app.Services.UseIngestModuleAsync();
 
 await app.RunAsync();
 

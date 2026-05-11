@@ -4,28 +4,54 @@ What's deferred and the trigger that should bring each forward.
 
 ## Up next — ordered punch-list
 
-Phase 3 (`Pam.Identity`) is complete across three PRs. Next is Players
-returning as module #3.
+Phase 3 (`Pam.Identity`) is complete across three PRs. The
+`Pam.Ingest` module is scaffolded (2026-05-12) with the canonical
+write path, idempotency, outbox, and a 21G stub adapter; Phase A of
+its strangler migration is the next implementation milestone post-June 1.
 
-1. **Re-introduce `Pam.Players`** (module #3). Player aggregate scoped
+1. **`Pam.Ingest` Phase A — intercept-and-forward.** Real 21G SOAP
+   listener (replace the JSON stub), real vendor auth (validate
+   systemId+systemPassword against a credentials table), and an
+   `IGbsRelay` that proxies the original request to GBS's existing
+   endpoint while PAM persists the canonical row. Zero functional
+   change to GBS; PAM gains a clean parallel transaction stream.
+   See [INGEST.md](INGEST.md) and [DECISIONS.md](DECISIONS.md) #25.
+2. **Re-introduce `Pam.Players`** (module #3). Player aggregate scoped
    under a `Brand`, authenticated via the embedded IDP under a separate
    audience (`pam_player_api`). Self-service registration + KYC +
    sessions + limits land as sub-aggregates of the same module.
-2. **Test gate before module #4** — outbox + integration tests
+   `IPlayerLookup` from `Pam.Players.Contracts` unblocks Ingest's
+   adapter-side player-id resolution.
+3. **Ingest Phase B — emit integration events.** With Players in
+   place, `TransactionIngestedIntegrationEvent` starts being meaningful
+   to downstream modules. First consumer is `Pam.Notifications`
+   (transaction receipts via `IEmailSender`); next is the Databricks
+   ingest swap (read PAM's stream instead of GBS's joins).
+4. **Test gate before module #4** — outbox + integration tests
    (Testcontainers: real Postgres) + arch tests (`NetArchTest.Rules`).
    See [Outbox](#outbox--transactional-integration-event-publishing) and
    [Tests](#tests).
-3. **Module #4 — `Pam.Wallet`** (double-entry ledger). Outbox is
+5. **Module #4 — `Pam.Wallet`** (double-entry ledger). Outbox is
    non-negotiable from day one of that module. See
    [the build order](#modules-not-yet-built) below.
-4. **`Pam.Notifications` expansion** — module skeleton +
+6. **`Pam.Notifications` expansion** — module skeleton +
    `IEmailSender` are in place (`Pam.Notifications` +
    `Pam.Notifications.Contracts`). Still to come: integration-event
-   consumers (the `Consumers/` folder is empty, waiting for Players to
-   publish), templating + locale resolution, send-audit-log DbContext,
-   SMS + push transports. Each piece lands when the first consumer
-   needs it. See *Notifications and cross-module email* in
-   ARCHITECTURE.md for the pattern.
+   consumers (the `Consumers/` folder is empty, waiting for Players
+   and Ingest to publish), templating + locale resolution,
+   send-audit-log DbContext, SMS + push transports. Each piece lands
+   when the first consumer needs it. See *Notifications and
+   cross-module email* in ARCHITECTURE.md for the pattern.
+7. **Ingest Phase C — PAM authoritative for one vendor.** Pick the
+   lowest-traffic vendor (Pocket or 21G). PAM stops forwarding for
+   that vendor and posts to GBS's wallet directly (Phase C) or, once
+   `Pam.Wallet` ships, through to it (Phase C'). A one-way sync job
+   keeps `tbCasinoPlayToday` populated so Crystal Reports keep
+   working.
+8. **Ingest Phase D — Listo.** All vendors migrated; GBS casino write
+   path retired; `tbCasinoPlayToday` becomes a read-only view fed
+   from `ingest.vendor_transactions`. Last step before the broader
+   GBS retirement.
 
 ## Deferred — pinned, will land when triggered
 
@@ -352,33 +378,42 @@ extraction-to-microservice plan. 8 tests; sub-second run.
 
 In dependency / priority order:
 
-1. **`Pam.Identity`** (Phase 3, in flight) — back-office Users &
+1. **`Pam.Identity`** ✓ SHIPPED (Phase 3) — back-office Users &
    Agents, OpenIddict, roles + permissions.
-2. **`Pam.Players`** — Player aggregate scoped under a Brand. KYC,
+2. **`Pam.Ingest`** (scaffolded 2026-05-12, Phase A pending) —
+   vendor transaction intercept layer. Single canonical
+   `vendor_transactions` table; `IVendorAdapter` per vendor.
+   Foundation for CS Part 1's unified transaction view. See
+   [INGEST.md](INGEST.md) and [DECISIONS.md](DECISIONS.md) #25.
+3. **`Pam.Players`** — Player aggregate scoped under a Brand. KYC,
    sessions, limits land as sub-aggregates of this module to start;
    spin out as separate modules when the surface justifies it.
-3. **`Pam.Wallet`** — double-entry ledger, deposits, withdrawals,
+   Unblocks Ingest's `IPlayerLookup` for vendor-username → PlayerId
+   resolution.
+4. **`Pam.Wallet`** — double-entry ledger, deposits, withdrawals,
    holds, balance projections. Outbox required from day one. Most
-   regulated module.
-4. **`Pam.Limits`** (if not already inside Players) — deposit / loss /
+   regulated module. Receives Ingest's `TransactionIngestedIntegrationEvent`
+   when Ingest reaches Phase C'.
+5. **`Pam.Limits`** (if not already inside Players) — deposit / loss /
    session limits, cooling-off, self-exclusion. Hooks into the MediatR
    pipeline as a `LimitsBehavior` so any `IPlayerInitiated` command is
    checked before the handler.
-5. **`Pam.Bonuses`** — grants, wagering progress, expiry. Subscribes to
+6. **`Pam.Bonuses`** — grants, wagering progress, expiry. Subscribes to
    wallet events. Bonus engine via a typed expression DSL (see
    CORE_PLATFORM_MAPPING.md decision #3).
-6. **`Pam.Bets`** — internet bets + bet shops; Wallet + GameCatalog
+7. **`Pam.Bets`** — internet bets + bet shops; Wallet + GameCatalog
    dependencies.
-7. **`Pam.GameProviders` / `Pam.GameCatalog`** — provider integrations,
+8. **`Pam.GameProviders` / `Pam.GameCatalog`** — provider integrations,
    product catalog.
-8. **`Pam.Affiliates`** — own admin panel, commissions, referral
+9. **`Pam.Affiliates`** — own admin panel, commissions, referral
    tracking.
-9. **`Pam.Notifications`** — email/SMS/push. Subscribes to
-   Player/KYC/Wallet events.
-10. **`Pam.Reporting`** — read-side projections over events; can be
+10. **`Pam.Notifications`** — email/SMS/push. Subscribes to
+    Player/KYC/Wallet/Ingest events.
+11. **`Pam.Reporting`** — read-side projections over events; can be
     incrementally added.
-11. **`Pam.Audits`** — append-only, subscribes to everything (see
-    above).
+12. **`Pam.Audits`** ✓ SHIPPED (per-command audit log via MediatR
+    behavior). Regulatory-grade hash-chained audit still deferred —
+    see "Audit module" section above.
 
 Game wallet ingress (`Pam.GameWallet`) is a **separate host**, not a
 module. Game providers hit it with HMAC-signed `/auth`, `/bet`, `/win`,

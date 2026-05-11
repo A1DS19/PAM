@@ -24,6 +24,33 @@ public sealed class ConfirmEmailEndpoint : ICarterModule
             .RequireRateLimiting("auth-sensitive")
             .WithTags("Identity")
             .WithName("ConfirmEmail")
+            .WithSummary("Confirm a user's email address")
+            .WithDescription(
+                """
+                Completes the email-confirmation flow that follows
+                `CreateUser` or `SendConfirmationEmail`. Verifies the `token`
+                against the Identity data-protection store and flips
+                `EmailConfirmed` to `true` for the matching user.
+
+                **Auth:** anonymous — the user clicking the link from their
+                email may not be signed in. Rate-limited by the
+                `auth-sensitive` policy.
+
+                **Idempotency:** not idempotent — the token is consumed on
+                success. A second POST with the same token returns
+                `422 Unprocessable Entity`.
+
+                **Side effects:** sets `EmailConfirmed = true`, which enables
+                interactive sign-in when `RequireConfirmedEmail` is on.
+
+                **Status codes:**
+                - `204 No Content` — email confirmed.
+                - `400 Bad Request` — malformed body.
+                - `422 Unprocessable Entity` — invalid or expired token, or
+                  email does not match a known user.
+                - `429 Too Many Requests` — rate-limited.
+                """
+            )
             .Produces(StatusCodes.Status204NoContent)
             .ProducesValidationProblem()
             .ProducesProblem(StatusCodes.Status422UnprocessableEntity);

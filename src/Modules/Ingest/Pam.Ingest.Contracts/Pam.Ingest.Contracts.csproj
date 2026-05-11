@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Pam.Ingest.Contracts</RootNamespace>
+    <AssemblyName>Pam.Ingest.Contracts</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Shared\Pam.Shared.Contracts\Pam.Shared.Contracts.csproj" />
+    <ProjectReference Include="..\..\..\Shared\Pam.Shared.Messaging\Pam.Shared.Messaging.csproj" />
+  </ItemGroup>
+
+</Project>

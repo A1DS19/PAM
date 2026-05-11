@@ -9,6 +9,270 @@ Rough ADR shape, kept terse. Order is reverse-chronological.
 
 ---
 
+## 25. `Pam.Ingest` — vendor-adapter pattern + four-phase GBS strangler — 2026-05-12
+
+**Context.** The CTO doc's CS Part 1 ("Unified Transaction View")
+requires intercepting third-party transactions from casinos, lottos,
+3rd-party sportsbooks, horses, and the cashier — normalising them and
+making them queryable in one place. Exploration of the legacy GBS code
+(`~/Desktop/work/gbs/`) showed that GBS already has the right *data*
+model (one shared `tbCasinoPlayToday` table per vendor, identified by
+`SystemID`, with `Reference` as the idempotency key) but a broken
+*integration* model: one bespoke controller per vendor (SOAP for 21G,
+REST+HMAC-MD5 for BTCasino, etc.), float-cents money columns, and
+`DATETIME` without timezone — root cause of the Databricks
+reconciliation mismatch Roger flagged.
+
+PAM needs to (a) absorb every vendor through a single canonical write
+path, (b) coexist with GBS during a long dual-running window, and (c)
+not bake assumptions about wallet authority into the ingest layer
+(`Pam.Wallet` ships later, after CS Part 1 / Players).
+
+**Decision.**
+
+- **A new `Pam.Ingest` module** with one canonical aggregate
+  (`VendorTransaction`) writing to `ingest.vendor_transactions`. One
+  table for every vendor; `vendor_id` is the discriminator. Mirrors
+  GBS's clean shared-table choice.
+
+- **`IVendorAdapter` per vendor.** Each adapter owns its vendor's auth
+  (HMAC, plaintext password, bearer, IP allow-list), payload parsing,
+  and response shape. The endpoint is a five-line Carter route that
+  calls `Authenticate → Translate → Send → FormatResponse`. Adding a
+  new vendor is mechanical.
+
+- **Canonical fixes vs GBS**:
+  - `bigint` signed cents (NOT float). Risk is negative, Win positive.
+    Adapter applies sign per vendor convention.
+  - `DateTimeOffset` → `timestamptz` everywhere. Two distinct stamps:
+    vendor-reported `OccurredAt` and PAM-recorded `ReceivedAt`.
+  - `UNIQUE (vendor_id, vendor_reference)` index enforces idempotency.
+    Handler catches `PostgresErrorCodes.UniqueViolation` for the
+    concurrent-retry race and surfaces `TransactionStatus.Duplicate`.
+  - `TransactionStatus` enum (`Received | Posted | Duplicate |
+    Rejected`) separates lifecycle state from storage. GBS's
+    "non-posted vs posted" UX collapses into status transitions.
+
+- **Outbox-from-day-one.** `IngestModule.ConfigureOutbox` wires
+  MassTransit EF Core outbox on `IngestDbContext`. The
+  `TransactionIngestedDomainHandler` publish runs inside the same
+  transaction as the row insert; the outbox delivery service forwards
+  to RabbitMQ. Crash between commit and broker can't drop the event.
+
+- **Four-phase strangler migration**, deliberately shippable
+  independently per vendor:
+  1. **Phase A — Intercept-and-forward.** PAM persists, then proxies
+     the original request to GBS. Zero functional change.
+  2. **Phase B — Emit integration events.** Downstream consumers
+     (Reporting, Notifications, Audit) start landing.
+  3. **Phase C — PAM authoritative for one vendor.** PAM stops
+     forwarding for that vendor; either posts to GBS's wallet via
+     existing stored proc, or (Phase C') through to `Pam.Wallet`. A
+     sync job keeps `tbCasinoPlayToday` populated so Crystal Reports
+     keep working.
+  4. **Phase D — Listo.** GBS casino write path retired;
+     `tbCasinoPlayToday` becomes a read-only view fed from
+     `ingest.vendor_transactions`.
+
+- **Route convention**: `POST /v1/ingest/vendors/{vendor-code}`.
+  Anonymous + rate-limited via `api-default`. The adapter owns vendor
+  auth; PAM JWT is irrelevant on this surface.
+
+**Consequences.**
+
+- Adding a casino vendor is implementing one adapter (~150 LOC) and
+  registering it. No schema changes, no migration, no new tests beyond
+  the adapter's translation logic.
+- The unified-transaction-view query is a single indexed read against
+  `ingest.vendor_transactions` filtered by `(brand_id, player_id)`.
+  This is what CS Part 1's customer-management screen calls.
+- `Pam.Players` is on the critical path: the adapter needs
+  `IPlayerLookup` from `Pam.Players.Contracts` to resolve vendor
+  usernames to `PlayerId`. Until Players ships, vendor adapters
+  accept the resolved PlayerId from a stub mapping.
+- A vendor can be at Phase A while another is at Phase C — phases are
+  per-vendor, not module-wide.
+- `Pam.Wallet` doesn't have to exist for Phase A / B value. Phase A
+  starts as soon as one real vendor adapter is wired.
+- Crystal Reports continuity is explicit (Phase D keeps a view called
+  `tbCasinoPlayToday`). Existing GBS-side reports don't need to be
+  rewritten as part of the migration.
+- Skipped: streaming-from-day-one (Kafka). The integration-event
+  outbox over RabbitMQ covers Phase A/B. ADR #24 covers when (and how)
+  to layer Kafka in for the high-throughput transaction stream.
+
+See [INGEST.md](INGEST.md) for the module reference,
+[ARCHITECTURE.md](ARCHITECTURE.md)'s outbox section for the publish
+semantics, and the GBS exploration brief retained in chat history for
+the source-of-truth read on what GBS actually does today.
+
+---
+
+## 24. RabbitMQ for integration events; defer streaming substrate to CS Part 1 — 2026-05-12
+
+**Context.** The CTO evaluation doc (`~/Downloads/BA Core Platform
+Evaluation Process.pdf`) listed both "Streaming?: Kafka?" and the
+broader messaging question as open. We picked RabbitMQ via MassTransit
+for cross-module events without a written rationale. Roger's CS Part 1
+requirement — "store stream of GBS Sportsbook updates and GBS other
+updates" plus intercepting casino / lotto / 3rd-party SB / horses /
+cashier transactions — is structurally **append-only, ordered,
+replayable from offsets**, which is Kafka-shaped, not queue-shaped.
+Both patterns will eventually exist; the decision is what to pick now
+versus defer.
+
+**Decision.**
+
+- **RabbitMQ stays the integration-event substrate** indefinitely. The
+  pub-sub model fits "thing happened, who cares?" — fan-out broadcast,
+  ephemeral queues per consumer, MassTransit's redelivery for retries,
+  EF Core outbox for transactional publishing. The whole `Pam.<Module>.
+  Contracts/IntegrationEvents` pattern is built on it.
+
+- **Streaming substrate is deferred to CS Part 1.** When the
+  transaction-intercept module starts, pick between:
+  - **Kafka** (Confluent / Strimzi / Redpanda) — textbook answer,
+    mature tooling, real operational weight.
+  - **NATS JetStream** — single-binary, append-only streams with
+    offsets, lighter ops, smaller ecosystem.
+  - **Postgres logical replication + a stream consumer** — uses the
+    DB we already have; cheaper; no replay-from-arbitrary-offset.
+  That comparison happens during CS Part 1 design, not today.
+
+- **MassTransit supports a Kafka rider**, so the cross-module
+  integration-event seam stays unchanged even when Kafka lands for the
+  ingest stream. Two transports, one façade.
+
+**Consequences.**
+- One broker today; two when CS Part 1 ships. No over-investment in
+  Kafka before we have a workload that justifies its operational
+  weight.
+- The trigger to revisit is explicit: first PR of `Pam.Ingest` (or
+  whatever the transaction-intercept module ends up named).
+- We don't pretend RabbitMQ can do "store-and-replay-from-offset" — we
+  document it can't, and accept the second dependency when we need it.
+
+---
+
+## 23. .NET / C# over Go, Rust, JavaScript for the back-office — 2026-05-12
+
+**Context.** The CTO evaluation doc listed "Backend languages: Go,
+Rust, C#, JavaScript?" with a question mark. The team is already
+building on .NET 10. The decision needs to be written so the formal
+June 1 evaluation has a rationale on file, and so the next time someone
+asks "why didn't we pick Go" the answer isn't an oral tradition.
+
+**Decision.** **.NET 10 / C#** for the back-office monolith and any
+microservice extracted from it.
+
+Front-end stays TypeScript (React + TanStack Start) — polyglot at the
+HTTP edge is fine and intentional. Future live-betting / in-play
+engine is **its own decision in its own service** — that's where Go,
+Elixir, or Rust might earn their keep, but it's not the back-office's
+question.
+
+Why .NET wins this specific workload:
+
+- **Domain modeling fit.** Regulated finance + iGaming needs rich
+  aggregates with invariants (Player, Wallet, Limits, Bonuses). C#
+  records + sealed hierarchies + exhaustive `switch` + a strong
+  analyzer ecosystem (`Meziantou.Analyzer`,
+  `Microsoft.CodeAnalysis.NetAnalyzers`, `SonarAnalyzer.CSharp`,
+  `BannedApiAnalyzers`) fit DDD well. Go's lack of sum types and
+  Rust's productivity floor both penalize this pattern.
+- **Back-office ecosystem.** EF Core, ASP.NET Core Identity,
+  OpenIddict, MassTransit, MediatR, FluentValidation, OpenTelemetry,
+  Quartz — every layer of the platform is one mainstream library
+  away. JVM matches; Go is thinner; Rust is thinner still for
+  line-of-business work.
+- **Hiring pool in LATAM.** The team is .NET-fluent; nearshore .NET
+  supply is large. Pivoting to Go means retraining or rehiring;
+  pivoting to Rust means both.
+- **Peer project (`pro-cr-billing`) is .NET 10.** Patterns, ops
+  knowledge, and SAST/CI tooling transfer.
+- **No performance ceiling we'd hit.** Back-office traffic is
+  hundreds of req/s, not tens of thousands. .NET's GC + AOT story is
+  more than sufficient. The "Go is faster" argument only kicks in at
+  high-concurrency / low-latency hot paths, which are a separate
+  service when (or if) they ship.
+
+**Consequences.**
+- Zero language license cost (.NET is MIT/Apache-2.0). The license
+  risks already absorbed (MediatR 12.4.1, MassTransit 8.5.9,
+  FluentAssertions 7.2.0 — ADR #5) are documented.
+- Front-end / back-end language split is intentional. Carter +
+  Scalar generate an OpenAPI spec the TS client can consume directly.
+- Future live-betting service is unconstrained by this decision —
+  that future module can be Go, Elixir, or another .NET service. The
+  contracts assembly + RabbitMQ exchange shapes are language-neutral.
+- Re-evaluating this is expensive once we have N modules; the right
+  time to revisit was the start of the project, which is now.
+
+---
+
+## 22. Postgres over MS SQL Server — 2026-05-12
+
+**Context.** GBS runs on MS SQL Server. The CTO evaluation doc listed
+"DB: MS SQL Server?" with a question mark. We picked Postgres 17 from
+the start of this project. The pick has friction (the GBS migration
+crosses RDBMS vendors, not just schemas) and benefit (modern Postgres
+features fit the patterns we're using). The choice needs to be on the
+record before the June 1 decision.
+
+**Decision.** **Postgres 17** for every PAM module.
+
+Reasons that compound:
+
+- **JSONB.** `audit.command_log.payload_json` is jsonb — searchable
+  from psql/Grafana with `payload_json -> 'field'`, indexable on
+  individual paths. The future regulatory-audit module (`Pam.Audits`)
+  is built on this. SQL Server's JSON support exists but isn't
+  indexable the same way.
+- **Advisory locks.** `pg_advisory_xact_lock(100_001)` wraps the
+  concurrent-boot seeder (ADR-equivalent in `PLATFORM_HARDENING.md`).
+  Future distributed locks for periodic jobs use the same pattern.
+  SQL Server's `sp_getapplock` works but its semantics are messier.
+- **Partitioning model.** Time-based partitioning on
+  `audit.command_log`, future `wallet.ledger_entry`, and the
+  not-yet-built CS Part 1 transaction stream is straightforward in
+  Postgres (declarative partitions, attach/detach). SQL Server's
+  partitioning is more ceremonial (partition functions + schemes +
+  filegroups).
+- **Snake_case idiom matched by `EFCore.NamingConventions`** (ADR
+  #18). `psql` and `pgcli` read naturally; SQL Server tooling
+  conventions are PascalCase by default.
+- **License + ops cost.** Postgres is free; Npgsql is mature.
+  SQL Server licensing scales with cores (Enterprise) or is feature-
+  limited (Standard). Operational weight is lighter — single binary,
+  no SQL Agent jobs to recreate (we use Quartz).
+- **Peer project alignment.** `pro-cr-billing` runs Postgres; the
+  team is already conversant; SAST/CI patterns transfer.
+- **Multi-replica primitives we already use** (DP keyring,
+  OpenIddict authorization storage, EF outbox) work identically on
+  Postgres and SQL Server, but our exact Npgsql tooling chain is
+  already wired.
+
+**Consequences.**
+- Migration from `gbs-db` requires a one-off SQL-Server-to-Postgres
+  data pump per table, or a CDC tool (Debezium, Fivetran, custom). The
+  357 tables / 1,901 stored procs need normalization regardless of
+  target DB; this is a one-time cost paid during the strangler-fig
+  migration, not an ongoing one.
+- All EF Core code uses `Npgsql.EntityFrameworkCore.PostgreSQL`. The
+  module pattern + design-time factory + `UseSnakeCaseNamingConvention()`
+  is consistent and copyable.
+- Drift from GBS during dual-running is unavoidable. The strangler-fig
+  design (deferred per ROADMAP) covers reconciliation between the two
+  stores during the cutover window.
+- Reverting to SQL Server gets expensive once Players + Wallet hold
+  real data — make the pick now, before that.
+- The choice does **not** preclude a SQL-Server-shaped read-replica
+  for legacy reporting tools (Crystal Reports, Databricks ingestion
+  during the transition). That's a separate question handled by the
+  CS Part 1 + financial-reporting work.
+
+---
+
 ## 21. Attribute-driven Redis caching as a MediatR behavior — 2026-05-11
 
 **Context.** A back-office hits `GetUser` and `ListUsers` on every page

@@ -27,6 +27,31 @@ public sealed class LoginMfaEndpoint : ICarterModule
             .RequireRateLimiting("auth-sensitive")
             .WithTags("Identity")
             .WithName("LoginMfa")
+            .WithSummary("Complete sign-in with an MFA code")
+            .WithDescription(
+                """
+                Second step of the MFA login flow. Verifies the TOTP `code` from
+                the user's authenticator app against the partial-auth cookie
+                issued by `/v1/identity/login`. On success the partial cookie is
+                upgraded to a full auth cookie; if `rememberMachine` is true an
+                additional persistent "trusted machine" cookie is set so future
+                logins on the same device skip the MFA step.
+
+                **Auth:** anonymous (carries the partial auth cookie);
+                rate-limited by the `auth-sensitive` policy.
+
+                **Side effects:** issues the full auth cookie on success;
+                increments the lockout counter on failure.
+
+                **Status codes:**
+                - `204 No Content` — code accepted, full auth cookie issued.
+                - `400 Bad Request` — malformed request body.
+                - `401 Unauthorized` — wrong code or missing partial cookie
+                  (`ValidationProblemDetails` with `errors`).
+                - `423 Locked` — account locked after repeated failures.
+                - `429 Too Many Requests` — rate-limited.
+                """
+            )
             .Produces(StatusCodes.Status204NoContent)
             .ProducesValidationProblem(StatusCodes.Status401Unauthorized)
             .ProducesProblem(StatusCodes.Status423Locked)
