@@ -39,13 +39,7 @@ public sealed class AuditBehavior<TRequest, TResponse>(
         }
         catch (Exception ex)
         {
-            await RecordAsync(
-                request,
-                startedAt,
-                AuditStatus.Failure,
-                ex,
-                CancellationToken.None
-            );
+            await RecordAsync(request, startedAt, AuditStatus.Failure, ex, CancellationToken.None);
             throw;
         }
     }
