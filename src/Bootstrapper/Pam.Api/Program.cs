@@ -251,21 +251,43 @@ builder.Services.AddRateLimiter(o =>
     };
 });
 
+// Resource attributes are emitted on every span/metric/log so the OTLP
+// receiver (Grafana LGTM in dev, anything OTLP-compatible in prod) can
+// segment by service + environment + host. Picked up automatically by
+// the Serilog OTLP sink too — it shares the OTEL_RESOURCE_ATTRIBUTES env
+// var convention. Override the OTLP endpoint with OTEL_EXPORTER_OTLP_ENDPOINT;
+// default is http://localhost:4317 (the LGTM container's OTLP gRPC port).
+var otelServiceVersion =
+    typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0";
+
 builder
     .Services.AddOpenTelemetry()
-    .ConfigureResource(r => r.AddService("pam-api"))
+    .ConfigureResource(r =>
+        r.AddService(serviceName: "pam-api", serviceVersion: otelServiceVersion)
+            .AddAttributes(
+                new KeyValuePair<string, object>[]
+                {
+                    new("deployment.environment", builder.Environment.EnvironmentName),
+                    new("host.name", Environment.MachineName),
+                }
+            )
+    )
     .WithTracing(t =>
         t.AddAspNetCoreInstrumentation()
             .AddHttpClientInstrumentation()
             .AddEntityFrameworkCoreInstrumentation()
             .AddSource("Npgsql")
+            .AddSource("MassTransit")
             .AddSource("Pam.*")
+            .AddOtlpExporter()
     )
     .WithMetrics(m =>
         m.AddAspNetCoreInstrumentation()
             .AddHttpClientInstrumentation()
             .AddRuntimeInstrumentation()
             .AddMeter("Pam.*")
+            .AddMeter("MassTransit")
+            .AddOtlpExporter()
     );
 
 builder.Services.AddHealthChecks();

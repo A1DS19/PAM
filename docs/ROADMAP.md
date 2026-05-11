@@ -235,14 +235,20 @@ N>1 replicas can't share user sessions.
   in-memory limiter is enough — the embedded OpenIddict server's
   brute-force protection layers on top.
 
-### OTLP exporter + collector
+### OTLP exporter + collector — SHIPPED
 
-- **What**: add `.AddOtlpExporter()` on the OTel tracing/metrics
-  builders; add an OpenTelemetry Collector to compose; route to
-  Tempo/Loki/Prometheus.
-- **Trigger**: production, or first time you need to debug a
-  multi-service flow. Until then, instrumentation is collected and
-  discarded.
+Traces, metrics and logs now leave the API over OTLP. Local dev uses the
+`grafana/otel-lgtm` all-in-one container (Tempo + Mimir + Loki + Grafana
++ Collector — Grafana UI on `:3001`, OTLP gRPC on `:4317`, HTTP on
+`:4318`). Resource attributes (`service.name`, `service.version`,
+`deployment.environment`, `host.name`) are emitted on every signal.
+
+Instrumentation sources: AspNetCore + HttpClient + EF Core + Npgsql +
+MassTransit + `Pam.*` ActivitySources/Meters. Logs flow through Serilog's
+OpenTelemetry sink alongside the existing Console/Seq sinks.
+
+Production swaps the endpoint via `OTEL_EXPORTER_OTLP_ENDPOINT` —
+Grafana Cloud, self-hosted LGTM split out, Honeycomb, Datadog, …
 
 ### CorrelationId middleware
 

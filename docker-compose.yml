@@ -73,8 +73,30 @@ services:
     volumes:
       - pam-seq:/data
 
+  # All-in-one Grafana LGTM stack (Loki + Grafana + Tempo + Mimir +
+  # OpenTelemetry Collector). The single image is significantly less
+  # ops than running each piece separately and is the upstream-supported
+  # path for local OTel exploration.
+  #
+  # Receives OTLP traces/metrics/logs from Pam.Api on :4317 (gRPC) and
+  # :4318 (HTTP). Grafana UI on :3001 (3000 is the SPA's port).
+  #
+  # Production replaces this with the real backend (Grafana Cloud, a
+  # self-hosted LGTM split out, Honeycomb, Datadog, …) — the API just
+  # changes the OTLP endpoint via OTEL_EXPORTER_OTLP_ENDPOINT.
+  otel-lgtm:
+    image: grafana/otel-lgtm:latest
+    container_name: pam-otel-lgtm
+    ports:
+      - "3001:3000"   # Grafana UI
+      - "4317:4317"   # OTLP gRPC
+      - "4318:4318"   # OTLP HTTP
+    volumes:
+      - pam-otel-lgtm:/data
+
 volumes:
   pam-postgres:
   pam-redis:
   pam-rabbitmq:
   pam-seq:
+  pam-otel-lgtm:

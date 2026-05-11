@@ -15,7 +15,7 @@ mprocs                     # one command; two panes
 
 `mprocs.yaml` runs two procs:
 
-- `services` — `docker compose up` (Postgres, RabbitMQ, Redis, Seq) in foreground
+- `services` — `docker compose up` (Postgres, RabbitMQ, Redis, Seq, Grafana LGTM) in foreground
 - `api` — `make dev-api` (apply migrations + `dotnet watch`)
 
 Switch panes with `Tab`; quit with `q` or `Ctrl-C`.
@@ -34,6 +34,7 @@ make test                                # unit tests in a separate terminal
 | `http://localhost:5000` | PAM API |
 | `http://localhost:5000/scalar/v1` | Scalar OpenAPI UI |
 | `http://localhost:8090` | Seq logs (no auth in dev) |
+| `http://localhost:3001` | Grafana — traces (Tempo), metrics (Mimir), logs (Loki) |
 
 ## Smoke test
 
@@ -63,6 +64,7 @@ then default to `RequireAuthorization` and individual ones opt out via
 | RabbitMQ | 5672 (amqp), 15672 (UI) | user: `pam` |
 | Redis | 6379 | password: `redis_dev_password` |
 | Seq | 5341 (ingest), 8090 (UI) | optional log viewer |
+| otel-lgtm | 4317 (OTLP gRPC), 4318 (OTLP HTTP), 3001 (Grafana UI) | traces+metrics+logs (Tempo/Mimir/Loki) |
 | Pam.Api | 5000 | |
 
 ### Known port conflicts
@@ -180,6 +182,21 @@ configuration precedence reads env vars over `appsettings.{env}.json`
 and treats `__` as the nesting separator. A dedicated secret store
 (HashiCorp Vault, SOPS, k3s External Secrets, etc.) is open — see
 [`ROADMAP.md`](ROADMAP.md).
+
+## Observability (OpenTelemetry)
+
+Pam.Api emits traces, metrics and logs over OTLP to the local Grafana
+LGTM container (`otel-lgtm` in compose). Open Grafana at
+`http://localhost:3001` — Tempo (traces), Mimir (metrics) and Loki (logs)
+are pre-wired as datasources. Resource attributes (`service.name`,
+`service.version`, `deployment.environment`, `host.name`) tag every
+signal so you can segment by env/instance once more than one runs.
+
+If LGTM isn't running, the SDK retries OTLP exports in the background and
+logs warnings — the API itself keeps serving. To point at a different
+collector (Grafana Cloud, a real Tempo, Honeycomb, Datadog, …) set
+`OTEL_EXPORTER_OTLP_ENDPOINT` (and for the Serilog log sink,
+`Serilog:WriteTo:2:Args:Endpoint` via env var) at the orchestrator.
 
 ## Scalar / OpenAPI
 
