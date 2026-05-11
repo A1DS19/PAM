@@ -61,17 +61,25 @@ public static class WalletModule
         return services;
     }
 
-    // Bus-side outbox config, mirroring OperatorsModule.ConfigureOutbox
-    // (which lives on chore/operators-outbox). Wired up in Program.cs by
-    // passing this delegate to AddPamMassTransit alongside the other
-    // module configurators. No-op until AddPamMassTransit gains the
-    // configureBus parameter from the outbox infrastructure PR.
+    // Bus-side outbox config. Per-DbContext delivery service polls
+    // wallet.outbox_state and forwards messages to RabbitMQ.
+    //
+    // IMPORTANT — do NOT call .UseBusOutbox() here. That method installs
+    // the bus-level publish-intercepting filter as a singleton
+    // (IBusOutboxNotification). Calling it more than once across module
+    // configurators replaces the singleton with the second registration,
+    // leaving the first delivery service holding a stale reference and
+    // throwing NullReferenceException on every poll.
+    //
+    // OperatorsModule.ConfigureOutbox owns the single UseBusOutbox()
+    // call. The filter it installs is bus-wide — it intercepts publishes
+    // from ANY DbContext that has AddEntityFrameworkOutbox<T> registered,
+    // including this one. Future publishing modules follow the same rule.
     public static void ConfigureOutbox(IBusRegistrationConfigurator bus)
     {
         bus.AddEntityFrameworkOutbox<WalletDbContext>(o =>
         {
             o.UsePostgres();
-            o.UseBusOutbox();
             o.QueryDelay = TimeSpan.FromSeconds(1);
             o.DuplicateDetectionWindow = TimeSpan.FromMinutes(30);
         });
