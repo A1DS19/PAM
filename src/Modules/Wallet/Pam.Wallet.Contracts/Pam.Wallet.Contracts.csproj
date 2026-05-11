@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Pam.Wallet.Contracts</RootNamespace>
+    <AssemblyName>Pam.Wallet.Contracts</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\Shared\Pam.Shared.Contracts\Pam.Shared.Contracts.csproj" />
+    <ProjectReference Include="..\..\..\Shared\Pam.Shared.Messaging\Pam.Shared.Messaging.csproj" />
+  </ItemGroup>
+
+</Project>
