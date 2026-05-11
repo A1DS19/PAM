@@ -9,6 +9,63 @@ Rough ADR shape, kept terse. Order is reverse-chronological.
 
 ---
 
+## 21. Attribute-driven Redis caching as a MediatR behavior — 2026-05-11
+
+**Context.** A back-office hits `GetUser` and `ListUsers` on every page
+load; the underlying Postgres reads aren't expensive yet but the
+pattern repeats for every module we'll add. We already have a shared
+Redis multiplexer (registered as singleton for the rate-limiter and
+DP-keys) and the MediatR pipeline (`LoggingBehavior`,
+`ValidationBehavior`). The two natural ways to plug caching in are
+(a) per-handler — each handler asks `IMemoryCache`/`IDistributedCache`
+directly, or (b) a pipeline behavior gated by attributes on the
+request type.
+
+**Decision.** Behavior with attributes. A query opts in with
+`[Cache(durationMinutes, keyPattern)]`; a command opts in with
+`[InvalidateCache(...patterns)]`. The behavior reads
+`typeof(TRequest).GetCustomAttribute<...>()` once per type and short-
+circuits on hit. `ICacheService` lives in `Pam.Shared.Contracts`;
+`RedisCacheService` (the only implementation) lives in `Pam.Shared`.
+Pipeline order is `Logging → Validation → Caching → handler`.
+
+Three sub-decisions worth pinning:
+
+- **Redis-only, no in-memory fallback.** `Program.cs` already throws at
+  boot if `ConnectionStrings:Redis` is missing — the whole platform
+  assumes a shared multiplexer. A second code path that silently falls
+  back to in-memory caching would drift from prod and bite us in a
+  multi-replica deploy where two API pods would each cache + invalidate
+  in their own process. Skip the option.
+- **Direct on `IConnectionMultiplexer`, not `IDistributedCache`.** We
+  need `IServer.KeysAsync` for pattern-based invalidation (the SCAN
+  cursor); `IDistributedCache` doesn't expose it. Going one layer down
+  also matches how the rate-limiter and DP-keys consume the
+  multiplexer, so we keep a single Redis seam.
+- **Key prefix `pam:cache:`.** Segregates from the rate-limiter
+  (`pam-api-rl:*`) and any future Redis use (locks, sessions). Pattern
+  delete never spills out of the cache namespace.
+
+**Consequences.**
+- A new module turns on caching with two attributes; no DI wiring per
+  feature. Cache lives in one place — easy to disable globally if
+  needed.
+- `[InvalidateCache]` patterns are literal — no `{Prop}` interpolation
+  against the command — so today's mutations purge the whole
+  `identity:user:*` namespace. Bounded but coarser than ideal.
+  Interpolation can be added later by routing each pattern through
+  `CacheKeyGenerator.GenerateKey(request, pattern)` inside the
+  behavior; deferred until the broad purge shows up as a cost.
+- Cached payloads are JSON. A renamed DTO field deserializes with the
+  old shape until TTL expires. Keep TTLs short and bump `keyPattern`
+  on shape changes.
+- No stampede protection. Multiple concurrent misses each run the
+  handler. Acceptable now; revisit when a hot key appears.
+
+See `docs/CACHING.md` for usage and gotchas.
+
+---
+
 ## 20. Roles + Permissions for back-office authz, not roles only — 2026-05-07
 
 **Context.** The peer `pro-cr-billing` project uses three role-based
