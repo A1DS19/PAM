@@ -1,9 +1,9 @@
 using FluentValidation.Results;
 using Microsoft.AspNetCore.Identity;
+using Pam.Identity.Authentication.Exceptions;
 using Pam.Identity.Authentication.Login;
 using Pam.Identity.Users.Models;
 using Pam.Shared.Contracts.CQRS;
-using Pam.Shared.Exceptions;
 
 namespace Pam.Identity.Authentication.LoginMfa;
 
@@ -36,13 +36,14 @@ public sealed class LoginMfaHandler(SignInManager<BackOfficeUser> signInManager)
         if (result.IsLockedOut)
         {
             throw new AccountLockedException(
-                code: "identity.login.mfa.locked_out",
+                code: AuthenticationErrors.MfaLockedOut,
                 message: "Too many failed MFA attempts. Try again later."
             );
         }
 
         throw new AuthenticationFailedException(
-            "The provided authenticator code is invalid.",
+            code: AuthenticationErrors.InvalidMfaCode,
+            detail: "The provided authenticator code is invalid.",
             new ValidationFailure(
                 nameof(LoginMfaCommand.Code),
                 "The provided authenticator code is invalid."

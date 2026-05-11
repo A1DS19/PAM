@@ -1,9 +1,9 @@
 using FluentValidation.Results;
 using Microsoft.AspNetCore.Identity;
+using Pam.Identity.Authentication.Exceptions;
 using Pam.Identity.Authentication.Login;
 using Pam.Identity.Users.Models;
 using Pam.Shared.Contracts.CQRS;
-using Pam.Shared.Exceptions;
 
 namespace Pam.Identity.Authentication.LoginRecoveryCode;
 
@@ -33,13 +33,14 @@ public sealed class LoginRecoveryCodeHandler(SignInManager<BackOfficeUser> signI
         if (result.IsLockedOut)
         {
             throw new AccountLockedException(
-                code: "identity.login.recovery_code.locked_out",
+                code: AuthenticationErrors.RecoveryCodeLockedOut,
                 message: "Too many failed recovery-code attempts. Try again later."
             );
         }
 
         throw new AuthenticationFailedException(
-            "The provided recovery code is invalid or already used.",
+            code: AuthenticationErrors.InvalidRecoveryCode,
+            detail: "The provided recovery code is invalid or already used.",
             new ValidationFailure(
                 nameof(LoginRecoveryCodeCommand.Code),
                 "The provided recovery code is invalid or already used."

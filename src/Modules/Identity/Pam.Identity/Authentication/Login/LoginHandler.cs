@@ -1,8 +1,8 @@
 using FluentValidation.Results;
 using Microsoft.AspNetCore.Identity;
+using Pam.Identity.Authentication.Exceptions;
 using Pam.Identity.Users.Models;
 using Pam.Shared.Contracts.CQRS;
-using Pam.Shared.Exceptions;
 
 namespace Pam.Identity.Authentication.Login;
 
@@ -40,7 +40,7 @@ public sealed class LoginHandler(SignInManager<BackOfficeUser> signInManager)
         if (result.IsLockedOut)
         {
             throw new AccountLockedException(
-                code: "identity.login.locked_out",
+                code: AuthenticationErrors.LockedOut,
                 message: "Too many failed login attempts. Try again later."
             );
         }
@@ -50,7 +50,8 @@ public sealed class LoginHandler(SignInManager<BackOfficeUser> signInManager)
         // oracle. Per-field entries still let the SPA hang inline errors
         // on both inputs.
         throw new AuthenticationFailedException(
-            "Invalid email or password.",
+            code: AuthenticationErrors.InvalidCredentials,
+            detail: "Invalid email or password.",
             new ValidationFailure(nameof(LoginCommand.Email), "Invalid email or password."),
             new ValidationFailure(nameof(LoginCommand.Password), "Invalid email or password.")
         );
