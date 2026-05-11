@@ -27,11 +27,18 @@ public static class SharedServiceCollectionExtensions
         services.AddMediatR(cfg =>
         {
             cfg.RegisterServicesFromAssemblies(assemblies);
+            // OTel outermost — the span covers logging, validation, cache,
+            // audit, and the handler so request duration in Grafana reflects
+            // the full MediatR pipeline, not just the handler.
+            cfg.AddOpenBehavior(typeof(OpenTelemetryBehavior<,>));
             cfg.AddOpenBehavior(typeof(LoggingBehavior<,>));
             cfg.AddOpenBehavior(typeof(ValidationBehavior<,>));
             // Caching runs after validation so invalid requests never poison
             // the cache, and so cache hits/misses still show up in log timings.
             cfg.AddOpenBehavior(typeof(CachingBehavior<,>));
+            // Audit innermost — sees the actual handler outcome (success or
+            // thrown exception) rather than upstream validation noise.
+            cfg.AddOpenBehavior(typeof(AuditBehavior<,>));
         });
 
         services.AddValidatorsFromAssemblies(assemblies);

@@ -24,6 +24,10 @@
     <Project Path="src/Modules/Wallet/Pam.Wallet.Contracts/Pam.Wallet.Contracts.csproj" />
     <Project Path="src/Modules/Wallet/Pam.Wallet/Pam.Wallet.csproj" />
   </Folder>
+  <Folder Name="/src/Modules/Audit/">
+    <Project Path="src/Modules/Audit/Pam.Audit.Contracts/Pam.Audit.Contracts.csproj" />
+    <Project Path="src/Modules/Audit/Pam.Audit/Pam.Audit.csproj" />
+  </Folder>
   <Folder Name="/src/Shared/">
     <Project Path="src/Shared/Pam.Shared.Contracts/Pam.Shared.Contracts.csproj" />
     <Project Path="src/Shared/Pam.Shared.Messaging/Pam.Shared.Messaging.csproj" />

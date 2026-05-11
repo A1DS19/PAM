@@ -9,6 +9,7 @@ using OpenIddict.Validation.AspNetCore;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using Pam.Audit;
 using Pam.Identity;
 using Pam.Identity.Contracts.Permissions;
 using Pam.Identity.Data;
@@ -79,6 +80,7 @@ builder.Services.AddIdentityModule(builder.Configuration, builder.Environment);
 builder.Services.AddOperatorsModule(builder.Configuration);
 builder.Services.AddPlayersModule(builder.Configuration);
 builder.Services.AddWalletModule(builder.Configuration);
+builder.Services.AddAuditModule(builder.Configuration);
 
 // Data Protection master keyring → IdentityDbContext.DataProtectionKeys.
 // Without this, each replica generates its own keyring under the local
@@ -381,6 +383,7 @@ await app.Services.UseIdentityModuleAsync();
 await app.Services.UseOperatorsModuleAsync();
 await app.Services.UsePlayersModuleAsync();
 await app.Services.UseWalletModuleAsync();
+await app.Services.UseAuditModuleAsync();
 
 await app.RunAsync();
 

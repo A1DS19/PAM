@@ -5,6 +5,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\Modules\Audit\Pam.Audit\Pam.Audit.csproj" />
     <ProjectReference Include="..\..\Modules\Identity\Pam.Identity\Pam.Identity.csproj" />
     <ProjectReference Include="..\..\Modules\Notifications\Pam.Notifications\Pam.Notifications.csproj" />
     <ProjectReference Include="..\..\Modules\Operators\Pam.Operators\Pam.Operators.csproj" />
