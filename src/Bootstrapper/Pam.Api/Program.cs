@@ -14,6 +14,7 @@ using Pam.Identity.Contracts.Permissions;
 using Pam.Identity.Data;
 using Pam.Notifications;
 using Pam.Operators;
+using Pam.Players;
 using Pam.Shared.Exceptions.Handlers;
 using Pam.Shared.Extensions;
 using Pam.Shared.Http;
@@ -44,6 +45,7 @@ var moduleAssemblies = new[]
     typeof(IdentityModule).Assembly,
     typeof(NotificationsModule).Assembly,
     typeof(OperatorsModule).Assembly,
+    typeof(PlayersModule).Assembly,
 };
 
 builder.Services.AddPamShared();
@@ -69,6 +71,7 @@ builder.Services.AddHttpContextAccessor();
 builder.Services.AddNotificationsModule(builder.Configuration);
 builder.Services.AddIdentityModule(builder.Configuration, builder.Environment);
 builder.Services.AddOperatorsModule(builder.Configuration);
+builder.Services.AddPlayersModule(builder.Configuration);
 
 // Data Protection master keyring → IdentityDbContext.DataProtectionKeys.
 // Without this, each replica generates its own keyring under the local
@@ -368,6 +371,7 @@ app.MapHealthChecks(
 
 await app.Services.UseIdentityModuleAsync();
 await app.Services.UseOperatorsModuleAsync();
+await app.Services.UsePlayersModuleAsync();
 
 await app.RunAsync();
 
