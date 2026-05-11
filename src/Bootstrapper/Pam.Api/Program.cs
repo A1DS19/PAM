@@ -15,11 +15,11 @@ using Pam.Identity.Data;
 using Pam.Notifications;
 using Pam.Operators;
 using Pam.Players;
-using Pam.Wallet;
 using Pam.Shared.Exceptions.Handlers;
 using Pam.Shared.Extensions;
 using Pam.Shared.Http;
 using Pam.Shared.Messaging.Extensions;
+using Pam.Wallet;
 using RedisRateLimiting;
 using Scalar.AspNetCore;
 using Serilog;
@@ -297,8 +297,7 @@ builder.Services.AddRateLimiter(o =>
 // the Serilog OTLP sink too — it shares the OTEL_RESOURCE_ATTRIBUTES env
 // var convention. Override the OTLP endpoint with OTEL_EXPORTER_OTLP_ENDPOINT;
 // default is http://localhost:4317 (the LGTM container's OTLP gRPC port).
-var otelServiceVersion =
-    typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0";
+var otelServiceVersion = typeof(Program).Assembly.GetName().Version?.ToString() ?? "0.0.0";
 
 builder
     .Services.AddOpenTelemetry()
@@ -341,6 +340,7 @@ builder
 var app = builder.Build();
 
 app.UseForwardedHeaders();
+
 // CorrelationId must run before SerilogRequestLogging so the request-log
 // line itself carries the id, and before any consumer of LogContext.
 app.UseCorrelationId();
