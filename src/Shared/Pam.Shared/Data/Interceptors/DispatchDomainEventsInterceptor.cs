@@ -12,9 +12,19 @@ public sealed class DispatchDomainEventsInterceptor(IPublisher publisher) : Save
     // aggregate (and thus raises another event) cannot loop forever.
     private const int MaxGenerations = 8;
 
-    public override async ValueTask<int> SavedChangesAsync(
-        SaveChangesCompletedEventData eventData,
-        int result,
+    // Dispatch PRE-save so integration-event publishes that fan out from
+    // domain handlers enrol in the same DB transaction. MassTransit's EF
+    // Core outbox intercepts those publishes and writes OutboxMessage rows
+    // inside the same SaveChanges scope — the DB write and the queued
+    // integration event commit atomically, then a background delivery
+    // service forwards to the broker.
+    //
+    // Trade-off: handlers see pre-commit state (the aggregate row isn't
+    // visible to other connections yet). If a handler throws, the entire
+    // SaveChanges fails — which is the point: atomicity by design.
+    public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(
+        DbContextEventData eventData,
+        InterceptionResult<int> result,
         CancellationToken cancellationToken = default
     )
     {
@@ -22,7 +32,7 @@ public sealed class DispatchDomainEventsInterceptor(IPublisher publisher) : Save
         {
             await DispatchAsync(eventData.Context, cancellationToken);
         }
-        return await base.SavedChangesAsync(eventData, result, cancellationToken);
+        return await base.SavingChangesAsync(eventData, result, cancellationToken);
     }
 
     private async Task DispatchAsync(DbContext context, CancellationToken ct)

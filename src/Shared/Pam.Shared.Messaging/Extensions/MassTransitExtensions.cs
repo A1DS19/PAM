@@ -7,9 +7,17 @@ namespace Pam.Shared.Messaging.Extensions;
 
 public static class MassTransitExtensions
 {
+    // `configureBus` is the extension point per publishing module — each
+    // module that needs an EF Core outbox calls
+    // `x.AddEntityFrameworkOutbox<TContext>(...)` here. The shared bus
+    // registration lives in this method (broker config, consumers,
+    // endpoint conventions); module-specific outbox wiring stays in the
+    // module so adding a new publisher doesn't require touching shared
+    // code. Callsites in Program.cs compose the configure delegates.
     public static IServiceCollection AddPamMassTransit(
         this IServiceCollection services,
         IConfiguration configuration,
+        Action<IBusRegistrationConfigurator>? configureBus = null,
         params Assembly[] consumerAssemblies
     )
     {
@@ -21,6 +29,8 @@ public static class MassTransitExtensions
             {
                 x.AddConsumers(consumerAssemblies);
             }
+
+            configureBus?.Invoke(x);
 
             x.UsingRabbitMq(
                 (context, cfg) =>

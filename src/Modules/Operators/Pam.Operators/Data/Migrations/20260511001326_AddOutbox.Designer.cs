@@ -2,6 +2,7 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
 using Pam.Operators.Data;
@@ -11,9 +12,11 @@ using Pam.Operators.Data;
 namespace Pam.Operators.Data.Migrations
 {
     [DbContext(typeof(OperatorsDbContext))]
-    partial class OperatorsDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260511001326_AddOutbox")]
+    partial class AddOutbox
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

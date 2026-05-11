@@ -51,7 +51,15 @@ builder.Services.AddPamMediatR(moduleAssemblies);
 // Consumer assemblies for MassTransit auto-discovery — Pam.Notifications
 // houses the integration-event subscribers (welcome emails, transactional
 // receipts, ...). Pam.Identity/Pam.Operators don't consume events yet.
-builder.Services.AddPamMassTransit(builder.Configuration, typeof(NotificationsModule).Assembly);
+//
+// The configureBus delegate composes per-module outbox setups. Each
+// publishing module exposes ConfigureOutbox(IBusRegistrationConfigurator);
+// add a call here when a new module starts publishing integration events.
+builder.Services.AddPamMassTransit(
+    builder.Configuration,
+    OperatorsModule.ConfigureOutbox,
+    typeof(NotificationsModule).Assembly
+);
 
 builder.Services.AddHttpContextAccessor();
 
