@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Text.Json;
 using FluentValidation;
+using FluentValidation.Results;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -19,7 +20,21 @@ public sealed class CustomExceptionHandler(ILogger<CustomExceptionHandler> logge
     {
         var (status, problem) = exception switch
         {
-            ValidationException ve => MapValidation(ve),
+            ValidationException ve => MapValidationFailures(
+                ve.Errors,
+                StatusCodes.Status400BadRequest,
+                title: "Validation failed",
+                type: "https://tools.ietf.org/html/rfc7231#section-6.5.1",
+                detail: "One or more validation errors occurred."
+            ),
+            AuthenticationFailedException afe => MapValidationFailures(
+                afe.Failures,
+                StatusCodes.Status401Unauthorized,
+                title: "Unauthorized",
+                type: "https://tools.ietf.org/html/rfc9110#section-15.5.2",
+                detail: afe.Message
+            ),
+            AccountLockedException ale => Map(ale, StatusCodes.Status423Locked, "Locked"),
             NotFoundException nfe => Map(nfe, StatusCodes.Status404NotFound, "Not Found"),
             AlreadyExistsException ae => Map(ae, StatusCodes.Status409Conflict, "Already Exists"),
             BusinessRuleViolationException be => Map(
@@ -67,10 +82,19 @@ public sealed class CustomExceptionHandler(ILogger<CustomExceptionHandler> logge
         return true;
     }
 
-    private static (int Status, ProblemDetails Problem) MapValidation(ValidationException ve)
+    // Shared by the FluentValidation 400 path and the AuthenticationFailedException
+    // 401 path so the `errors` dict is grouped identically on both surfaces —
+    // clients consume the two shapes with the same code.
+    private static (int Status, ProblemDetails Problem) MapValidationFailures(
+        IEnumerable<ValidationFailure> failures,
+        int status,
+        string title,
+        string type,
+        string detail
+    )
     {
-        var errors = ve
-            .Errors.GroupBy(
+        var errors = failures
+            .GroupBy(
                 e => string.IsNullOrEmpty(e.PropertyName) ? "_" : e.PropertyName,
                 StringComparer.Ordinal
             )
@@ -82,12 +106,12 @@ public sealed class CustomExceptionHandler(ILogger<CustomExceptionHandler> logge
 
         var pd = new ValidationProblemDetails(errors)
         {
-            Type = "https://tools.ietf.org/html/rfc7231#section-6.5.1",
-            Title = "Validation failed",
-            Status = StatusCodes.Status400BadRequest,
-            Detail = "One or more validation errors occurred.",
+            Type = type,
+            Title = title,
+            Status = status,
+            Detail = detail,
         };
-        return (StatusCodes.Status400BadRequest, pd);
+        return (status, pd);
     }
 
     private static (int Status, ProblemDetails Problem) Map(

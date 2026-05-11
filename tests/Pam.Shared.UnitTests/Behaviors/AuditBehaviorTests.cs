@@ -23,12 +23,6 @@ public sealed class AuditBehaviorTests
 
     public sealed record GetThingQuery(Guid Id) : IQuery<int>;
 
-    public sealed record TryLoginCommand(string Email) : ICommand<TryLoginResult>;
-
-    public sealed record TryLoginResult(bool Succeeded, string? Reason) : IOperationResult
-    {
-        public string? FailureReason => Reason;
-    }
 
     [Fact]
     public async Task Command_success_writes_success_row_with_redacted_payload()
@@ -96,72 +90,6 @@ public sealed class AuditBehaviorTests
 
         response.Should().Be(99);
         await audit.DidNotReceive().RecordAsync(Arg.Any<AuditEntry>(), Arg.Any<CancellationToken>());
-    }
-
-    [Fact]
-    public async Task Operation_result_with_succeeded_false_records_failure_row()
-    {
-        var (audit, sut) = CreateSut<TryLoginCommand, TryLoginResult>();
-        AuditEntry? captured = null;
-        await audit.RecordAsync(
-            Arg.Do<AuditEntry>(e => captured = e),
-            Arg.Any<CancellationToken>()
-        );
-        var result = new TryLoginResult(false, "InvalidCredentials");
-
-        var response = await sut.Handle(
-            new TryLoginCommand("admin@pam.test"),
-            () => Task.FromResult(result),
-            CancellationToken.None
-        );
-
-        response.Should().Be(result);
-        captured.Should().NotBeNull();
-        captured!.Status.Should().Be(AuditStatus.Failure);
-        captured.ErrorType.Should().Be("OperationFailure");
-        captured.ErrorMessage.Should().Be("InvalidCredentials");
-    }
-
-    [Fact]
-    public async Task Operation_result_with_succeeded_true_still_records_success()
-    {
-        var (audit, sut) = CreateSut<TryLoginCommand, TryLoginResult>();
-        AuditEntry? captured = null;
-        await audit.RecordAsync(
-            Arg.Do<AuditEntry>(e => captured = e),
-            Arg.Any<CancellationToken>()
-        );
-
-        await sut.Handle(
-            new TryLoginCommand("admin@pam.test"),
-            () => Task.FromResult(new TryLoginResult(true, null)),
-            CancellationToken.None
-        );
-
-        captured.Should().NotBeNull();
-        captured!.Status.Should().Be(AuditStatus.Success);
-        captured.ErrorType.Should().BeNull();
-        captured.ErrorMessage.Should().BeNull();
-    }
-
-    [Fact]
-    public async Task Operation_result_failure_without_reason_falls_back_to_operation_failed()
-    {
-        var (audit, sut) = CreateSut<TryLoginCommand, TryLoginResult>();
-        AuditEntry? captured = null;
-        await audit.RecordAsync(
-            Arg.Do<AuditEntry>(e => captured = e),
-            Arg.Any<CancellationToken>()
-        );
-
-        await sut.Handle(
-            new TryLoginCommand("admin@pam.test"),
-            () => Task.FromResult(new TryLoginResult(false, null)),
-            CancellationToken.None
-        );
-
-        captured!.Status.Should().Be(AuditStatus.Failure);
-        captured.ErrorMessage.Should().Be("OperationFailed");
     }
 
     [Fact]

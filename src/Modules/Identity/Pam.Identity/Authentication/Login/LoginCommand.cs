@@ -9,30 +9,9 @@ public sealed record LoginCommand(
     bool RememberMe
 ) : ICommand<LoginResult>;
 
-// LoginResult discriminates between failure modes so the endpoint can map to
-// the right HTTP status. RequiresTwoFactor is a partial success — valid
-// credentials, awaiting second factor; the MFA endpoint writes its own
-// audit row when the flow completes.
-public sealed record LoginResult(bool Succeeded, bool IsLockedOut, bool RequiresTwoFactor)
-    : IOperationResult
-{
-    public string? FailureReason
-    {
-        get
-        {
-            if (Succeeded)
-            {
-                return null;
-            }
-            if (IsLockedOut)
-            {
-                return "LockedOut";
-            }
-            if (RequiresTwoFactor)
-            {
-                return "RequiresTwoFactor";
-            }
-            return "InvalidCredentials";
-        }
-    }
-}
+// Slim result: did the sign-in fully complete, or do we need a second
+// factor next? Every other failure mode (bad password, account locked,
+// invalid MFA / recovery code) is signalled by the handler throwing —
+// CustomExceptionHandler renders those as the standard ProblemDetails
+// shape the rest of the API uses.
+public sealed record LoginResult(bool Succeeded, bool RequiresTwoFactor);

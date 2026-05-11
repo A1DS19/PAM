@@ -1,14 +1,15 @@
+using FluentValidation.Results;
 using Microsoft.AspNetCore.Identity;
 using Pam.Identity.Authentication.Login;
 using Pam.Identity.Users.Models;
 using Pam.Shared.Contracts.CQRS;
+using Pam.Shared.Exceptions;
 
 namespace Pam.Identity.Authentication.LoginMfa;
 
-// TwoFactorAuthenticatorSignInAsync reads the two-factor partial cookie that
-// PasswordSignInAsync set; if there's no partial cookie the call fails with
-// !Succeeded and no Identity flags. Reuses the LoginResult shape so the
-// endpoint can map to the same status codes as /v1/identity/login.
+// TwoFactorAuthenticatorSignInAsync reads the two-factor partial cookie
+// that PasswordSignInAsync set; non-success outcomes throw so they flow
+// through CustomExceptionHandler like the password step.
 public sealed class LoginMfaHandler(SignInManager<BackOfficeUser> signInManager)
     : ICommandHandler<LoginMfaCommand, LoginResult>
 {
@@ -27,10 +28,25 @@ public sealed class LoginMfaHandler(SignInManager<BackOfficeUser> signInManager)
             rememberClient: command.RememberMachine
         );
 
-        return new LoginResult(
-            Succeeded: result.Succeeded,
-            IsLockedOut: result.IsLockedOut,
-            RequiresTwoFactor: false
+        if (result.Succeeded)
+        {
+            return new LoginResult(Succeeded: true, RequiresTwoFactor: false);
+        }
+
+        if (result.IsLockedOut)
+        {
+            throw new AccountLockedException(
+                code: "identity.login.mfa.locked_out",
+                message: "Too many failed MFA attempts. Try again later."
+            );
+        }
+
+        throw new AuthenticationFailedException(
+            "The provided authenticator code is invalid.",
+            new ValidationFailure(
+                nameof(LoginMfaCommand.Code),
+                "The provided authenticator code is invalid."
+            )
         );
     }
 }
