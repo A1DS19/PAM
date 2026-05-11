@@ -35,7 +35,14 @@ public static class OperatorsModule
             // See note above — this is the single call across the bus.
             o.UseBusOutbox();
 
-            o.QueryDelay = TimeSpan.FromSeconds(1);
+            // QueryDelay is the IDLE poll cadence — when there's nothing
+            // to deliver. Active sends are woken immediately by
+            // BusOutboxNotification, so this only sets the upper bound on
+            // post-restart delivery latency for messages left in the
+            // outbox by a previous process. 60s keeps the dev log quiet
+            // and the DB workload negligible; tune down for production
+            // restart-sensitivity.
+            o.QueryDelay = TimeSpan.FromSeconds(60);
             o.DuplicateDetectionWindow = TimeSpan.FromMinutes(30);
         });
     }
@@ -76,11 +83,7 @@ public static class OperatorsModule
 
         services
             .AddHealthChecks()
-            .AddNpgSql(
-                connectionString,
-                name: "operators-db",
-                tags: ["ready", "module:operators"]
-            );
+            .AddNpgSql(connectionString, name: "operators-db", tags: ["ready", "module:operators"]);
 
         return services;
     }
