@@ -64,7 +64,9 @@ Phase 3 ships across three PRs.
   application descriptor (public client, PKCE required, redirect URIs
   from `Identity:BackOfficeSpa` config), and the bootstrap Owner from
   `PAM_BOOTSTRAP_OWNER_EMAIL` / `PAM_BOOTSTRAP_OWNER_PASSWORD` env vars
-  (only seeded if no Owner exists).
+  (only seeded if no Owner exists). Wrapped in a Postgres
+  `pg_advisory_xact_lock` (key 100_001) so concurrent replica boots
+  serialise through the seed and can't race UNIQUE constraints.
 - Cookie-challenge redirect to the React SPA's `LoginUrl?returnUrl=…`
   for browser navigations; JSON / `/v1/*` requests get 401 instead.
 - Quartz hosted service: hourly cleanup of orphaned tokens and
