@@ -50,6 +50,18 @@
   </ItemGroup>
 
   <!--
+    Redis-backed PartitionedRateLimiter — drop-in for the in-memory
+    FixedWindow/SlidingWindow limiters, so the policy semantics stay the
+    same when running multiple Pam.Api replicas. Throws on Redis
+    unavailability by default; Program.cs is where the fail-open vs
+    fail-closed behavior gets configured.
+  -->
+  <ItemGroup Label="Rate Limiting">
+    <PackageVersion Include="RedisRateLimiting" Version="1.2.0" />
+    <PackageVersion Include="RedisRateLimiting.AspNetCore" Version="1.2.0" />
+  </ItemGroup>
+
+  <!--
     MailKit is the modern .NET SMTP/IMAP library — System.Net.Mail.SmtpClient
     is obsoleted by Microsoft for new code. Used by Pam.Identity's
     SmtpEmailSender for password-reset + email-confirmation flows (dev sink:
