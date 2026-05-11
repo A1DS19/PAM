@@ -16,6 +16,7 @@ using Pam.Notifications;
 using Pam.Operators;
 using Pam.Shared.Exceptions.Handlers;
 using Pam.Shared.Extensions;
+using Pam.Shared.Http;
 using Pam.Shared.Messaging.Extensions;
 using RedisRateLimiting;
 using Scalar.AspNetCore;
@@ -330,6 +331,9 @@ builder
 var app = builder.Build();
 
 app.UseForwardedHeaders();
+// CorrelationId must run before SerilogRequestLogging so the request-log
+// line itself carries the id, and before any consumer of LogContext.
+app.UseCorrelationId();
 app.UseSerilogRequestLogging();
 app.UseExceptionHandler();
 app.UseCors();
@@ -366,3 +370,11 @@ await app.Services.UseIdentityModuleAsync();
 await app.Services.UseOperatorsModuleAsync();
 
 await app.RunAsync();
+
+// Exposes the synthesized top-level-program type so
+// WebApplicationFactory<Program> in Pam.IntegrationTests can bootstrap
+// the host. Without this the compiler-generated Program class is internal
+// and the test project can't reference it.
+#pragma warning disable S1118 // partial class for top-level statements doesn't need a constructor
+public partial class Program;
+#pragma warning restore S1118
