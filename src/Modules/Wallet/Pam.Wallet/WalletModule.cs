@@ -80,7 +80,10 @@ public static class WalletModule
         bus.AddEntityFrameworkOutbox<WalletDbContext>(o =>
         {
             o.UsePostgres();
-            o.QueryDelay = TimeSpan.FromSeconds(1);
+            // See OperatorsModule.ConfigureOutbox for the QueryDelay
+            // rationale — kept in sync across modules so all delivery
+            // services have the same idle cadence.
+            o.QueryDelay = TimeSpan.FromSeconds(60);
             o.DuplicateDetectionWindow = TimeSpan.FromMinutes(30);
         });
     }
