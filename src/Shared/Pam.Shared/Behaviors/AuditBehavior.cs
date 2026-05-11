@@ -18,12 +18,6 @@ public sealed class AuditBehavior<TRequest, TResponse>(
 ) : IPipelineBehavior<TRequest, TResponse>
     where TRequest : notnull
 {
-    // The literal recorded in audit_log.error_type for a domain failure
-    // surfaced via IOperationResult (e.g. "invalid credentials") so the
-    // auditor can tell it from an exception-driven failure where
-    // error_type carries the actual .NET type name.
-    private const string OperationFailureErrorType = "OperationFailure";
-
     public async Task<TResponse> Handle(
         TRequest request,
         RequestHandlerDelegate<TResponse> next,
@@ -40,26 +34,14 @@ public sealed class AuditBehavior<TRequest, TResponse>(
         try
         {
             var response = await next();
-            if (response is IOperationResult { Succeeded: false } failure)
-            {
-                await RecordOperationFailureAsync(
-                    request,
-                    startedAt,
-                    failure.FailureReason,
-                    cancellationToken
-                );
-            }
-            else
-            {
-                await RecordAsync(
-                    request,
-                    startedAt,
-                    AuditStatus.Success,
-                    errorType: null,
-                    errorMessage: null,
-                    cancellationToken
-                );
-            }
+            await RecordAsync(
+                request,
+                startedAt,
+                AuditStatus.Success,
+                errorType: null,
+                errorMessage: null,
+                cancellationToken
+            );
             return response;
         }
         catch (Exception ex)
@@ -82,21 +64,6 @@ public sealed class AuditBehavior<TRequest, TResponse>(
             .GetType()
             .GetInterfaces()
             .Any(i => i.IsGenericType && i.GetGenericTypeDefinition() == typeof(ICommand<>));
-
-    private Task RecordOperationFailureAsync(
-        TRequest request,
-        DateTimeOffset startedAt,
-        string? reason,
-        CancellationToken cancellationToken
-    ) =>
-        RecordAsync(
-            request,
-            startedAt,
-            AuditStatus.Failure,
-            errorType: OperationFailureErrorType,
-            errorMessage: reason ?? "OperationFailed",
-            cancellationToken
-        );
 
     private async Task RecordAsync(
         TRequest request,

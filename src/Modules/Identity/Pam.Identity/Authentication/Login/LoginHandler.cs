@@ -1,12 +1,16 @@
+using FluentValidation.Results;
 using Microsoft.AspNetCore.Identity;
 using Pam.Identity.Users.Models;
 using Pam.Shared.Contracts.CQRS;
+using Pam.Shared.Exceptions;
 
 namespace Pam.Identity.Authentication.Login;
 
 // SignInManager.PasswordSignInAsync sets the auth cookie on the current
-// HttpContext as a side effect — the endpoint just needs to map the result
-// to an HTTP status code.
+// HttpContext as a side effect; non-success outcomes are surfaced as
+// thrown exceptions so CustomExceptionHandler renders them as the
+// standard ProblemDetails shape every other PAM endpoint uses. The only
+// shape the result discriminates is "valid creds, MFA next".
 //
 // `lockoutOnFailure: true` ensures the lockout policy from IdentityModule
 // (5 attempts / 15 min) is enforced. The `auth-sensitive` rate limiter on
@@ -23,10 +27,32 @@ public sealed class LoginHandler(SignInManager<BackOfficeUser> signInManager)
             lockoutOnFailure: true
         );
 
-        return new LoginResult(
-            Succeeded: result.Succeeded,
-            IsLockedOut: result.IsLockedOut,
-            RequiresTwoFactor: result.RequiresTwoFactor
+        if (result.Succeeded)
+        {
+            return new LoginResult(Succeeded: true, RequiresTwoFactor: false);
+        }
+
+        if (result.RequiresTwoFactor)
+        {
+            return new LoginResult(Succeeded: false, RequiresTwoFactor: true);
+        }
+
+        if (result.IsLockedOut)
+        {
+            throw new AccountLockedException(
+                code: "identity.login.locked_out",
+                message: "Too many failed login attempts. Try again later."
+            );
+        }
+
+        // Uniform "Invalid email or password." — don't disclose which of
+        // the two was wrong, so the endpoint isn't a user-enumeration
+        // oracle. Per-field entries still let the SPA hang inline errors
+        // on both inputs.
+        throw new AuthenticationFailedException(
+            "Invalid email or password.",
+            new ValidationFailure(nameof(LoginCommand.Email), "Invalid email or password."),
+            new ValidationFailure(nameof(LoginCommand.Password), "Invalid email or password.")
         );
     }
 }
