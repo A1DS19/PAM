@@ -10,6 +10,29 @@ public sealed record LoginCommand(
 ) : ICommand<LoginResult>;
 
 // LoginResult discriminates between failure modes so the endpoint can map to
-// the right HTTP status. RequiresTwoFactor will land in PR 2 with the MFA
-// challenge endpoints; today the handler treats it as a failure.
-public sealed record LoginResult(bool Succeeded, bool IsLockedOut, bool RequiresTwoFactor);
+// the right HTTP status. RequiresTwoFactor is a partial success — valid
+// credentials, awaiting second factor; the MFA endpoint writes its own
+// audit row when the flow completes.
+public sealed record LoginResult(bool Succeeded, bool IsLockedOut, bool RequiresTwoFactor)
+    : IOperationResult
+{
+    public string? FailureReason
+    {
+        get
+        {
+            if (Succeeded)
+            {
+                return null;
+            }
+            if (IsLockedOut)
+            {
+                return "LockedOut";
+            }
+            if (RequiresTwoFactor)
+            {
+                return "RequiresTwoFactor";
+            }
+            return "InvalidCredentials";
+        }
+    }
+}
