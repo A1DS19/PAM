@@ -39,16 +39,43 @@ public static class MassTransitExtensions
                     var host =
                         section["Host"]
                         ?? throw new InvalidOperationException("MessageBroker:Host is required");
+                    var vhost = section["VirtualHost"] ?? "/";
 
-                    cfg.Host(
-                        host,
-                        section["VirtualHost"] ?? "/",
-                        h =>
-                        {
-                            h.Username(section["Username"] ?? "guest");
-                            h.Password(section["Password"] ?? "guest");
-                        }
-                    );
+                    // Port is optional — local dev uses RabbitMQ's default 5672
+                    // and skips this key. Testcontainers (and any non-default
+                    // setup) maps to a host-side ephemeral port and sets it.
+                    if (
+                        ushort.TryParse(
+                            section["Port"],
+                            System.Globalization.NumberStyles.Integer,
+                            System.Globalization.CultureInfo.InvariantCulture,
+                            out var port
+                        )
+                    )
+                    {
+                        cfg.Host(
+                            host,
+                            port,
+                            vhost,
+                            h =>
+                            {
+                                h.Username(section["Username"] ?? "guest");
+                                h.Password(section["Password"] ?? "guest");
+                            }
+                        );
+                    }
+                    else
+                    {
+                        cfg.Host(
+                            host,
+                            vhost,
+                            h =>
+                            {
+                                h.Username(section["Username"] ?? "guest");
+                                h.Password(section["Password"] ?? "guest");
+                            }
+                        );
+                    }
 
                     cfg.ConfigureEndpoints(context);
                 }

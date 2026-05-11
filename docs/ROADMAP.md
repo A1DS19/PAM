@@ -270,21 +270,35 @@ OpenTelemetry sink alongside the existing Console/Seq sinks.
 Production swaps the endpoint via `OTEL_EXPORTER_OTLP_ENDPOINT` —
 Grafana Cloud, self-hosted LGTM split out, Honeycomb, Datadog, …
 
-### CorrelationId middleware
+### CorrelationId middleware — SHIPPED
 
-- **What**: explicit `X-Correlation-Id` middleware that flows through
-  MediatR + outbox + MassTransit headers.
-- **Trigger**: the first cross-process flow that needs to be replayed
-  for debugging. OTel `traceparent` covers HTTP↔HTTP today;
-  CorrelationId is needed when async outbox flows span multiple traces.
+`CorrelationIdMiddleware` in `Pam.Shared.Http` reads `X-Correlation-Id`
+(generates a `Guid.CreateVersion7().ToString("N")` if absent), echoes it
+on the response, pushes it into the current Activity's baggage + tag
+(so MassTransit's diagnostic instrumentation carries it through bus
+publishes and the outbox), and `BeginScope`s a `CorrelationId` log
+property so every log line in the request is correlated.
 
-### Architecture tests
+Wired in `Program.cs` immediately after `UseForwardedHeaders` and
+before `UseSerilogRequestLogging` so the request-log entry itself
+carries the id.
 
-- **What**: `NetArchTest.Rules` test project (or a small project at the
-  repo root) enforcing the per-module boundary: a `Pam.<X>` project
-  cannot reference a `Pam.<Y>` project directly (only `*.Contracts`).
-- **Trigger**: as soon as a second non-Identity module exists. Without
-  enforcement the rule rots within a few PRs.
+### Architecture tests — SHIPPED
+
+`tests/Pam.ArchitectureTests` (xUnit + `NetArchTest.Rules`) encodes the
+module-boundary and DDD-shape rules from ARCHITECTURE.md:
+
+- **Module boundary**: each `Pam.<X>` assembly must not reference
+  another `Pam.<Y>` directly. `*.Contracts` is the only allowed seam.
+- **Domain events**: types ending in `DomainEvent` must implement
+  `IDomainEvent`.
+- **Integration events**: types in `*.IntegrationEvents` namespaces
+  must end in `IntegrationEvent`.
+- **Aggregates**: concrete types implementing `IAggregate` must derive
+  from `Aggregate<>`.
+
+Fails the test run if a future PR introduces a coupling that breaks the
+extraction-to-microservice plan. 8 tests; sub-second run.
 
 ### Production secret store
 
@@ -301,20 +315,26 @@ Grafana Cloud, self-hosted LGTM split out, Honeycomb, Datadog, …
 
 ### Tests
 
-- **Done**: unit tests for `Pam.Operators` (Brand aggregate behavior +
-  CreateBrand validator) and `Pam.Identity` (validators for CreateUser /
-  ListUsers / ChangePassword / MfaVerify / MfaDisable / ForgotPassword /
-  ResetPassword / ConfirmEmail / LoginRecoveryCode + `PermissionResolver`
-  against the EF Core in-memory provider). 70 tests on xUnit 3 +
-  FluentAssertions 7, ~1s run.
-- **What's left**: integration tests with Testcontainers (real Postgres,
-  real RabbitMQ) for the create-brand and login flows end-to-end;
-  architecture tests via `NetArchTest.Rules` for module-boundary
-  enforcement.
-- **Trigger**: before module #4 (Wallet) lands. Architecture tests in
-  particular pay for themselves now that a second module (Identity)
-  exists and references back into `Pam.Identity.Contracts` from
-  `Pam.Operators`.
+- **Unit tests**: 70 across `Pam.Operators.UnitTests` (Brand aggregate
+  behavior + CreateBrand validator) and `Pam.Identity.UnitTests`
+  (validators for CreateUser / ListUsers / ChangePassword / MfaVerify /
+  MfaDisable / ForgotPassword / ResetPassword / ConfirmEmail /
+  LoginRecoveryCode + `PermissionResolver` against the EF Core
+  in-memory provider). xUnit 3 + FluentAssertions 7, ~1s.
+- **Architecture tests**: 8 in `tests/Pam.ArchitectureTests` using
+  `NetArchTest.Rules`. Module boundary + DDD shape rules. See
+  *Architecture tests — SHIPPED* above.
+- **Integration tests**: `tests/Pam.IntegrationTests` boots the API
+  via `WebApplicationFactory<Program>` against Testcontainers
+  (Postgres 17, RabbitMQ 4, Redis 7). `PamContainersFixture` is a
+  shared `ICollectionFixture` so the ~10–20s container boot cost is
+  paid once. Initial coverage: live + ready health probes, anonymous
+  `POST /v1/operators/brands` → 401. 3 tests, ~3s including container
+  warm-up.
+- **What's left**: expand integration coverage as new endpoints land
+  (the test gate is the harness, not the coverage). Authenticated
+  flows need a test-only auth seam (issue a dev bearer token) so the
+  full `CreateBrand` → `GetBrand` round-trip can run authenticated.
 
 ### Legacy `gbs-db` cutover plan
 

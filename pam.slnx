@@ -24,5 +24,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/Pam.Operators.UnitTests/Pam.Operators.UnitTests.csproj" />
     <Project Path="tests/Pam.Identity.UnitTests/Pam.Identity.UnitTests.csproj" />
+    <Project Path="tests/Pam.IntegrationTests/Pam.IntegrationTests.csproj" />
+    <Project Path="tests/Pam.ArchitectureTests/Pam.ArchitectureTests.csproj" />
   </Folder>
 </Solution>
