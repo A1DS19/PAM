@@ -1,3 +1,4 @@
+using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -9,6 +10,25 @@ namespace Pam.Operators;
 
 public static class OperatorsModule
 {
+    // Outbox config for the bus — passed to AddPamMassTransit from
+    // Program.cs. Lives here so the module owns the choice of polling
+    // interval, delivery batch size, etc. as those tune over time.
+    public static void ConfigureOutbox(IBusRegistrationConfigurator bus)
+    {
+        bus.AddEntityFrameworkOutbox<OperatorsDbContext>(o =>
+        {
+            o.UsePostgres();
+
+            // UseBusOutbox enables transactional publish: IPublishEndpoint
+            // calls from a SaveChanges scope write to OutboxMessage in the
+            // same transaction instead of going straight to the broker.
+            o.UseBusOutbox();
+
+            o.QueryDelay = TimeSpan.FromSeconds(1);
+            o.DuplicateDetectionWindow = TimeSpan.FromMinutes(30);
+        });
+    }
+
     public static IServiceCollection AddOperatorsModule(
         this IServiceCollection services,
         IConfiguration configuration

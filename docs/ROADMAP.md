@@ -175,16 +175,25 @@ shape (lockout, password policy) carried over; `pro-cr-billing`'s custom
 JWT + RefreshToken rotation NOT carried over (OpenIddict's token storage
 replaces it).
 
-### Outbox + transactional integration-event publishing
+### Outbox + transactional integration-event publishing — SHIPPED
 
-- **What**: MassTransit EF Core outbox on the publishing module's
-  DbContext; flip the relevant `<Event>DomainHandler` to publish the
-  integration event through the outbox.
-- **Trigger**: first cross-module consumer (Audit, Notifications, or
-  any module reacting to `BrandCreatedIntegrationEvent`).
-- **Why deferred**: no consumers yet, and direct publish without outbox
-  would be inconsistent (event sent but DB write rolled back).
-- **For Wallet, this is non-negotiable on day one of that module.**
+MassTransit EF Core outbox is wired on `OperatorsDbContext`. Integration
+events published from inside a `SaveChanges` scope
+(`BrandCreatedDomainHandler` and equivalents) write to `outbox_message`
+in the same transaction as the aggregate write; an
+`EntityFrameworkOutboxDeliveryService` forwards to RabbitMQ.
+
+`DispatchDomainEventsInterceptor` moved from post-save to pre-save so
+the dispatch happens inside the transaction. See *Outbox + pre-save
+domain-event dispatch* in ARCHITECTURE.md for the new semantics and
+their trade-offs.
+
+Per-module wiring: each publishing module exposes a
+`ConfigureOutbox(IBusRegistrationConfigurator)` delegate, composed in
+`Program.cs`'s call to `AddPamMassTransit`. Adding a new publisher
+takes three steps (package, EF model entities, ConfigureOutbox).
+
+**For Wallet, this stays non-negotiable on day one of that module.**
 
 ### Audit module
 

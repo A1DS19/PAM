@@ -421,22 +421,40 @@ secret store (HashiCorp Vault, SOPS, k3s External Secrets, ...) is an open
 question pinned in `ROADMAP.md` and will be evaluated when the first real
 production deploy lands.
 
-## Outbox is not wired yet
+## Outbox + pre-save domain-event dispatch
 
-Domain events dispatch post-save: the interceptor overrides
-`SavedChangesAsync` so handlers see the committed state. The dispatch loop
-is bounded at 8 generations to catch handlers that recursively raise events
-on tracked aggregates.
+Domain events dispatch **pre-save**: `DispatchDomainEventsInterceptor`
+overrides `SavingChangesAsync` so handlers run inside the same DB
+transaction as the `SaveChanges` that triggered them. The dispatch loop
+is bounded at 8 generations to catch handlers that recursively raise
+events on tracked aggregates.
 
-Trade-off: post-save dispatch is no longer atomic with the DB write — a
-crash between the commit and the handler's side effect leaves the row
-without the side effect. For in-process handlers that's acceptable
-(restart picks up via change-data scans where needed); for cross-module
-broker publishing it isn't, which is exactly what the outbox solves.
+MassTransit's EF Core outbox is wired on `OperatorsDbContext` (and any
+future publishing module's DbContext). `BrandCreatedDomainHandler` calls
+`IPublishEndpoint.Publish(BrandCreatedIntegrationEvent)`; the outbox
+intercepts that publish and writes the message to `outbox_message` in
+the same transaction. A background `EntityFrameworkOutboxDeliveryService`
+polls the table and forwards to RabbitMQ. DB write + queued integration
+event commit atomically; a crash between commit and delivery is harmless
+because the delivery service retries until the row is marked sent.
 
-When the first cross-module consumer ships, add MassTransit's EF Core
-outbox to the publishing module's DbContext so integration events persist
-transactionally with the aggregate write.
+Trade-off you're buying into:
 
-For Wallet/transactional flows later, the outbox is non-negotiable from day
-one of that module.
+- Handlers see **pre-commit** state. The aggregate row isn't visible to
+  other connections yet, so a handler that queries the DB for
+  freshly-written data will miss it. Workaround: pass the data through
+  the event payload.
+- A throwing handler **rolls back the whole `SaveChanges`**. That's the
+  point — atomic by design. Don't put best-effort side effects (logging,
+  metrics) in a domain handler; put them in an integration-event consumer.
+
+**Per-module outbox wiring.** Each publishing module exposes a public
+`ConfigureOutbox(IBusRegistrationConfigurator)` delegate (see
+`OperatorsModule`); `Program.cs` passes those delegates to
+`AddPamMassTransit`. Adding a new publisher = three lines: package
+reference, model entities (`AddInboxStateEntity` / `AddOutboxMessageEntity` /
+`AddOutboxStateEntity`), `ConfigureOutbox` delegate.
+
+**For Wallet** the outbox is non-negotiable from day one of that module —
+the wallet's `LedgerEntryPosted` integration event MUST be transactional
+with the ledger row. This pattern is the substrate that makes it possible.
