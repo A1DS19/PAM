@@ -12,6 +12,9 @@ namespace Pam.Shared.Exceptions.Handlers;
 public sealed class CustomExceptionHandler(ILogger<CustomExceptionHandler> logger)
     : IExceptionHandler
 {
+    private const string ValidationProblemType =
+        "https://tools.ietf.org/html/rfc7231#section-6.5.1";
+
     public async ValueTask<bool> TryHandleAsync(
         HttpContext httpContext,
         Exception exception,
@@ -20,29 +23,17 @@ public sealed class CustomExceptionHandler(ILogger<CustomExceptionHandler> logge
     {
         var (status, problem) = exception switch
         {
+            // Module-specific domain failures all flow through here —
+            // PamDomainException carries Status/Title/Type/Failures, so
+            // adding a new exception in a module needs zero handler change.
+            PamDomainException pde => MapDomain(pde),
             ValidationException ve => MapValidationFailures(
                 ve.Errors,
                 StatusCodes.Status400BadRequest,
                 title: "Validation failed",
-                type: "https://tools.ietf.org/html/rfc7231#section-6.5.1",
+                type: ValidationProblemType,
                 detail: "One or more validation errors occurred."
             ),
-            AuthenticationFailedException afe => MapValidationFailures(
-                afe.Failures,
-                StatusCodes.Status401Unauthorized,
-                title: "Unauthorized",
-                type: "https://tools.ietf.org/html/rfc9110#section-15.5.2",
-                detail: afe.Message
-            ),
-            AccountLockedException ale => Map(ale, StatusCodes.Status423Locked, "Locked"),
-            NotFoundException nfe => Map(nfe, StatusCodes.Status404NotFound, "Not Found"),
-            AlreadyExistsException ae => Map(ae, StatusCodes.Status409Conflict, "Already Exists"),
-            BusinessRuleViolationException be => Map(
-                be,
-                StatusCodes.Status422UnprocessableEntity,
-                "Business Rule Violation"
-            ),
-            ForbiddenException fe => Map(fe, StatusCodes.Status403Forbidden, "Forbidden"),
             UnauthorizedAccessException => MapBare(
                 StatusCodes.Status401Unauthorized,
                 "Unauthorized",
@@ -82,9 +73,39 @@ public sealed class CustomExceptionHandler(ILogger<CustomExceptionHandler> logge
         return true;
     }
 
-    // Shared by the FluentValidation 400 path and the AuthenticationFailedException
-    // 401 path so the `errors` dict is grouped identically on both surfaces —
-    // clients consume the two shapes with the same code.
+    private static (int Status, ProblemDetails Problem) MapDomain(PamDomainException ex)
+    {
+        // Failures present → ValidationProblemDetails (errors dict), same
+        // shape as FluentValidation 400 but with the exception's own
+        // status code. Absent → plain ProblemDetails with the `code`
+        // extension clients program against.
+        if (ex.Failures is { Count: > 0 } failures)
+        {
+            var (status, pd) = MapValidationFailures(
+                failures,
+                ex.Status,
+                ex.Title,
+                ex.TypeUri ?? ValidationProblemType,
+                ex.Message
+            );
+            pd.Extensions["code"] = ex.Code;
+            return (status, pd);
+        }
+
+        var problem = new ProblemDetails
+        {
+            Type = ex.TypeUri,
+            Title = ex.Title,
+            Status = ex.Status,
+            Detail = ex.Message,
+        };
+        problem.Extensions["code"] = ex.Code;
+        return (ex.Status, problem);
+    }
+
+    // Shared by the FluentValidation 400 path and any PamDomainException
+    // that carries failures so the `errors` dict is grouped identically
+    // across surfaces — one client code path consumes both.
     private static (int Status, ProblemDetails Problem) MapValidationFailures(
         IEnumerable<ValidationFailure> failures,
         int status,
@@ -111,22 +132,6 @@ public sealed class CustomExceptionHandler(ILogger<CustomExceptionHandler> logge
             Status = status,
             Detail = detail,
         };
-        return (status, pd);
-    }
-
-    private static (int Status, ProblemDetails Problem) Map(
-        PamDomainException ex,
-        int status,
-        string title
-    )
-    {
-        var pd = new ProblemDetails
-        {
-            Title = title,
-            Status = status,
-            Detail = ex.Message,
-        };
-        pd.Extensions["code"] = ex.Code;
         return (status, pd);
     }
 
