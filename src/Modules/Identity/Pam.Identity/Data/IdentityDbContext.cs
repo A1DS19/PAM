@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.DataProtection.EntityFrameworkCore;
+using Microsoft.AspNetCore.DataProtection.KeyManagement;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Identity.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
@@ -14,14 +16,20 @@ namespace Pam.Identity.Data;
 //                           OpenIddictApplications, OpenIddictAuthorizations,
 //                           OpenIddictScopes, OpenIddictTokens
 //   Custom (this module):   permissions, role_permissions
+//   Data Protection:        data_protection_keys (master keyring; shared
+//                           across replicas so cookies + OpenIddict-issued
+//                           opaque strings round-trip across instances)
 public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> options)
-    : IdentityDbContext<BackOfficeUser, IdentityRole<Guid>, Guid>(options)
+    : IdentityDbContext<BackOfficeUser, IdentityRole<Guid>, Guid>(options),
+        IDataProtectionKeyContext
 {
     public const string Schema = "identity";
 
     public DbSet<Permission> Permissions => Set<Permission>();
 
     public DbSet<RolePermission> RolePermissions => Set<RolePermission>();
+
+    public DbSet<DataProtectionKey> DataProtectionKeys => Set<DataProtectionKey>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -39,6 +47,8 @@ public sealed class IdentityDbContext(DbContextOptions<IdentityDbContext> option
         builder.Entity<IdentityRoleClaim<Guid>>().ToTable("role_claims");
         builder.Entity<IdentityUserLogin<Guid>>().ToTable("user_logins");
         builder.Entity<IdentityUserToken<Guid>>().ToTable("user_tokens");
+
+        builder.Entity<DataProtectionKey>().ToTable("data_protection_keys");
 
         builder.HasDefaultSchema(Schema);
         builder.ApplyConfigurationsFromAssembly(typeof(IdentityDbContext).Assembly);
