@@ -21,8 +21,4 @@ public sealed record TwentyOneGRequest(
 // Public response DTO. `Status` is a stringified TransactionStatus so the
 // vendor sees `"Received" | "Duplicate" | "Rejected" | "Posted"` directly
 // rather than enum ordinals.
-public sealed record TwentyOneGResponse(
-    Guid TransactionId,
-    string Status,
-    string? RejectedReason
-);
+public sealed record TwentyOneGResponse(Guid TransactionId, string Status, string? RejectedReason);
