@@ -2,29 +2,26 @@
 using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
-using Microsoft.EntityFrameworkCore.Migrations;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
-using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
-using Pam.Wallet.Data;
+using Pam.Shared.Messaging.Data;
 
 #nullable disable
 
-namespace Pam.Wallet.Data.Migrations
+namespace Pam.Shared.Messaging.Data.Migrations
 {
-    [DbContext(typeof(WalletDbContext))]
-    [Migration("20260511005713_InitialAccount")]
-    partial class InitialAccount
+    [DbContext(typeof(PamMessagingDbContext))]
+    partial class PamMessagingDbContextModelSnapshot : ModelSnapshot
     {
-        /// <inheritdoc />
-        protected override void BuildTargetModel(ModelBuilder modelBuilder)
+        protected override void BuildModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
-                .HasDefaultSchema("wallet")
+                .HasDefaultSchema("messaging")
                 .HasAnnotation("ProductVersion", "10.0.7")
-                .HasAnnotation("Relational:MaxIdentifierLength", 63);
+                .HasAnnotation("Relational:MaxIdentifierLength", 128);
 
-            NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
+            SqlServerModelBuilderExtensions.UseIdentityColumns(modelBuilder);
 
             modelBuilder.Entity("MassTransit.EntityFrameworkCoreIntegration.InboxState", b =>
                 {
@@ -33,22 +30,22 @@ namespace Pam.Wallet.Data.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("id");
 
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("Id"));
 
                     b.Property<DateTime?>("Consumed")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetime2")
                         .HasColumnName("consumed");
 
                     b.Property<Guid>("ConsumerId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("consumer_id");
 
                     b.Property<DateTime?>("Delivered")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetime2")
                         .HasColumnName("delivered");
 
                     b.Property<DateTime?>("ExpirationTime")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetime2")
                         .HasColumnName("expiration_time");
 
                     b.Property<long?>("LastSequenceNumber")
@@ -56,25 +53,25 @@ namespace Pam.Wallet.Data.Migrations
                         .HasColumnName("last_sequence_number");
 
                     b.Property<Guid>("LockId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("lock_id");
 
                     b.Property<Guid>("MessageId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("message_id");
 
                     b.Property<int>("ReceiveCount")
-                        .HasColumnType("integer")
+                        .HasColumnType("int")
                         .HasColumnName("receive_count");
 
                     b.Property<DateTime>("Received")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetime2")
                         .HasColumnName("received");
 
                     b.Property<byte[]>("RowVersion")
                         .IsConcurrencyToken()
                         .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("bytea")
+                        .HasColumnType("rowversion")
                         .HasColumnName("row_version");
 
                     b.HasKey("Id")
@@ -86,7 +83,7 @@ namespace Pam.Wallet.Data.Migrations
                     b.HasIndex("Delivered")
                         .HasDatabaseName("ix_inbox_state_delivered");
 
-                    b.ToTable("inbox_state", "wallet");
+                    b.ToTable("inbox_state", "messaging");
                 });
 
             modelBuilder.Entity("MassTransit.EntityFrameworkCoreIntegration.OutboxMessage", b =>
@@ -96,94 +93,94 @@ namespace Pam.Wallet.Data.Migrations
                         .HasColumnType("bigint")
                         .HasColumnName("sequence_number");
 
-                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("SequenceNumber"));
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<long>("SequenceNumber"));
 
                     b.Property<string>("Body")
                         .IsRequired()
-                        .HasColumnType("text")
+                        .HasColumnType("nvarchar(max)")
                         .HasColumnName("body");
 
                     b.Property<string>("ContentType")
                         .IsRequired()
                         .HasMaxLength(256)
-                        .HasColumnType("character varying(256)")
+                        .HasColumnType("nvarchar(256)")
                         .HasColumnName("content_type");
 
                     b.Property<Guid?>("ConversationId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("conversation_id");
 
                     b.Property<Guid?>("CorrelationId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("correlation_id");
 
                     b.Property<string>("DestinationAddress")
                         .HasMaxLength(256)
-                        .HasColumnType("character varying(256)")
+                        .HasColumnType("nvarchar(256)")
                         .HasColumnName("destination_address");
 
                     b.Property<DateTime?>("EnqueueTime")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetime2")
                         .HasColumnName("enqueue_time");
 
                     b.Property<DateTime?>("ExpirationTime")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetime2")
                         .HasColumnName("expiration_time");
 
                     b.Property<string>("FaultAddress")
                         .HasMaxLength(256)
-                        .HasColumnType("character varying(256)")
+                        .HasColumnType("nvarchar(256)")
                         .HasColumnName("fault_address");
 
                     b.Property<string>("Headers")
-                        .HasColumnType("text")
+                        .HasColumnType("nvarchar(max)")
                         .HasColumnName("headers");
 
                     b.Property<Guid?>("InboxConsumerId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("inbox_consumer_id");
 
                     b.Property<Guid?>("InboxMessageId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("inbox_message_id");
 
                     b.Property<Guid?>("InitiatorId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("initiator_id");
 
                     b.Property<Guid>("MessageId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("message_id");
 
                     b.Property<string>("MessageType")
                         .IsRequired()
-                        .HasColumnType("text")
+                        .HasColumnType("nvarchar(max)")
                         .HasColumnName("message_type");
 
                     b.Property<Guid?>("OutboxId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("outbox_id");
 
                     b.Property<string>("Properties")
-                        .HasColumnType("text")
+                        .HasColumnType("nvarchar(max)")
                         .HasColumnName("properties");
 
                     b.Property<Guid?>("RequestId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("request_id");
 
                     b.Property<string>("ResponseAddress")
                         .HasMaxLength(256)
-                        .HasColumnType("character varying(256)")
+                        .HasColumnType("nvarchar(256)")
                         .HasColumnName("response_address");
 
                     b.Property<DateTime>("SentTime")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetime2")
                         .HasColumnName("sent_time");
 
                     b.Property<string>("SourceAddress")
                         .HasMaxLength(256)
-                        .HasColumnType("character varying(256)")
+                        .HasColumnType("nvarchar(256)")
                         .HasColumnName("source_address");
 
                     b.HasKey("SequenceNumber")
@@ -197,28 +194,30 @@ namespace Pam.Wallet.Data.Migrations
 
                     b.HasIndex("OutboxId", "SequenceNumber")
                         .IsUnique()
-                        .HasDatabaseName("ix_outbox_message_outbox_id_sequence_number");
+                        .HasDatabaseName("ix_outbox_message_outbox_id_sequence_number")
+                        .HasFilter("[outbox_id] IS NOT NULL");
 
                     b.HasIndex("InboxMessageId", "InboxConsumerId", "SequenceNumber")
                         .IsUnique()
-                        .HasDatabaseName("ix_outbox_message_inbox_message_id_inbox_consumer_id_sequence_");
+                        .HasDatabaseName("ix_outbox_message_inbox_message_id_inbox_consumer_id_sequence_number")
+                        .HasFilter("[inbox_message_id] IS NOT NULL AND [inbox_consumer_id] IS NOT NULL");
 
-                    b.ToTable("outbox_message", "wallet");
+                    b.ToTable("outbox_message", "messaging");
                 });
 
             modelBuilder.Entity("MassTransit.EntityFrameworkCoreIntegration.OutboxState", b =>
                 {
                     b.Property<Guid>("OutboxId")
                         .ValueGeneratedOnAdd()
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("outbox_id");
 
                     b.Property<DateTime>("Created")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetime2")
                         .HasColumnName("created");
 
                     b.Property<DateTime?>("Delivered")
-                        .HasColumnType("timestamp with time zone")
+                        .HasColumnType("datetime2")
                         .HasColumnName("delivered");
 
                     b.Property<long?>("LastSequenceNumber")
@@ -226,13 +225,13 @@ namespace Pam.Wallet.Data.Migrations
                         .HasColumnName("last_sequence_number");
 
                     b.Property<Guid>("LockId")
-                        .HasColumnType("uuid")
+                        .HasColumnType("uniqueidentifier")
                         .HasColumnName("lock_id");
 
                     b.Property<byte[]>("RowVersion")
                         .IsConcurrencyToken()
                         .ValueGeneratedOnAddOrUpdate()
-                        .HasColumnType("bytea")
+                        .HasColumnType("rowversion")
                         .HasColumnName("row_version");
 
                     b.HasKey("OutboxId")
@@ -241,71 +240,7 @@ namespace Pam.Wallet.Data.Migrations
                     b.HasIndex("Created")
                         .HasDatabaseName("ix_outbox_state_created");
 
-                    b.ToTable("outbox_state", "wallet");
-                });
-
-            modelBuilder.Entity("Pam.Wallet.Accounts.Models.Account", b =>
-                {
-                    b.Property<Guid>("Id")
-                        .HasColumnType("uuid")
-                        .HasColumnName("id");
-
-                    b.Property<Guid>("BrandId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("brand_id");
-
-                    b.Property<DateTimeOffset>("CreatedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("created_at");
-
-                    b.Property<string>("CreatedById")
-                        .IsRequired()
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)")
-                        .HasColumnName("created_by_id");
-
-                    b.Property<string>("CreatedByType")
-                        .IsRequired()
-                        .HasMaxLength(16)
-                        .HasColumnType("character varying(16)")
-                        .HasColumnName("created_by_type");
-
-                    b.Property<string>("Currency")
-                        .IsRequired()
-                        .HasMaxLength(3)
-                        .HasColumnType("character(3)")
-                        .HasColumnName("currency")
-                        .IsFixedLength();
-
-                    b.Property<DateTimeOffset?>("LastModifiedAt")
-                        .HasColumnType("timestamp with time zone")
-                        .HasColumnName("last_modified_at");
-
-                    b.Property<string>("LastModifiedById")
-                        .HasMaxLength(128)
-                        .HasColumnType("character varying(128)")
-                        .HasColumnName("last_modified_by_id");
-
-                    b.Property<string>("LastModifiedByType")
-                        .HasMaxLength(16)
-                        .HasColumnType("character varying(16)")
-                        .HasColumnName("last_modified_by_type");
-
-                    b.Property<Guid>("PlayerId")
-                        .HasColumnType("uuid")
-                        .HasColumnName("player_id");
-
-                    b.HasKey("Id")
-                        .HasName("pk_accounts");
-
-                    b.HasIndex("BrandId")
-                        .HasDatabaseName("ix_accounts_brand_id");
-
-                    b.HasIndex("BrandId", "PlayerId", "Currency")
-                        .IsUnique()
-                        .HasDatabaseName("ix_accounts_brand_id_player_id_currency");
-
-                    b.ToTable("accounts", "wallet");
+                    b.ToTable("outbox_state", "messaging");
                 });
 
             modelBuilder.Entity("MassTransit.EntityFrameworkCoreIntegration.OutboxMessage", b =>
@@ -319,7 +254,7 @@ namespace Pam.Wallet.Data.Migrations
                         .WithMany()
                         .HasForeignKey("InboxMessageId", "InboxConsumerId")
                         .HasPrincipalKey("MessageId", "ConsumerId")
-                        .HasConstraintName("fk_outbox_message_inbox_state_inbox_message_id_inbox_consumer_");
+                        .HasConstraintName("fk_outbox_message_inbox_state_inbox_message_id_inbox_consumer_id");
                 });
 #pragma warning restore 612, 618
         }

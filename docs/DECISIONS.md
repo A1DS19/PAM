@@ -9,6 +9,228 @@ Rough ADR shape, kept terse. Order is reverse-chronological.
 
 ---
 
+## 27. Database platform: SQL Server (supersedes ADR #22) — 2026-05-12
+
+**Status:** supersedes ADR #22 ("Postgres over MS SQL Server").
+
+**Context.** ADR #22 picked Postgres on technical grounds (jsonb, partial
+indexes, exclusion constraints, `timestamptz` correctness, snake_case
+ergonomics, `pg_trgm` for searching player names, no vendor lock).
+That decision held until the 2026-05-12 stakeholder meeting, which
+revisited the choice for non-technical reasons:
+
+- **Operational expertise.** The DBA bench at the company is built
+  around SQL Server. Every production DB they currently operate is SQL
+  Server; they do not have Postgres on-call rotation, runbooks,
+  backup/restore playbooks, or DR rehearsal procedures. Adding Postgres
+  would mean either (a) building that capability from scratch
+  alongside everything else PAM is shipping, or (b) shipping PAM
+  without the operational depth the rest of the platform has.
+- **Existing licensed infrastructure.** SQL Server licenses, the
+  monitoring stack pointed at them, the BAC backup destination, and
+  the SAN provisioning patterns are all already in place. Postgres
+  would have required net-new provisioning across all four.
+- **CS-facing tooling reuses the same DB.** Per the meeting, Rodolfo +
+  Milton's CS site will be built against the same database PAM writes
+  to. That team is also a SQL Server shop.
+
+ADR #22's technical advantages (jsonb, partial indexes, etc.) are
+real, but PAM did not yet rely on any of them — the codebase used
+plain relational columns + EF Core's provider-neutral abstractions
+throughout. The cost of switching at this point is bounded: change
+the providers, regenerate migrations, swap the docker-compose image,
+re-run the smoke tests.
+
+**Decision.** PAM moves to **SQL Server 2022** for development, QA,
+and production. Local dev uses
+`mcr.microsoft.com/mssql/server:2022-latest` via Docker (with
+`platform: linux/amd64` for Apple Silicon hosts running under Rosetta
+emulation; QA + prod run native amd64). QA infra is being provisioned
+by IT per the same meeting.
+
+Provider-specific scope of work (executed 2026-05-12):
+
+- `Directory.Packages.props`: drop `Npgsql.EntityFrameworkCore.PostgreSQL`,
+  `Npgsql.OpenTelemetry`, `AspNetCore.HealthChecks.NpgSql`,
+  `Testcontainers.PostgreSql`; add
+  `Microsoft.EntityFrameworkCore.SqlServer`,
+  `AspNetCore.HealthChecks.SqlServer`, `Testcontainers.MsSql`.
+- All module `AddXModule`: `UseNpgsql(...)` → `UseSqlServer(...)`.
+- All design-time factories: same swap.
+- `Pam.Shared.Messaging.AddPamMassTransit`: `o.UsePostgres()` →
+  `o.UseSqlServer()` for the MT outbox.
+- Idempotency error code: `PostgresException.SqlState == "23505"` →
+  `SqlException.Number == 2601 || 2627` for unique-violation detection
+  in `IngestTransactionHandler`.
+- All seven `Data/Migrations/` folders deleted and regenerated against
+  the SQL Server provider (Postgres migrations encode provider-specific
+  column types like `timestamptz`/`jsonb` that don't exist on SQL Server).
+- `docker-compose.yml`: `postgres:17` → `mcr.microsoft.com/mssql/server:2022-latest`.
+- `ConnectionStrings:Pam`: `Host=localhost;Port=5432;...` →
+  `Server=localhost,1433;Database=pam;User Id=sa;Password=...;TrustServerCertificate=True;Encrypt=False`.
+- `Testcontainers.PostgreSql` → `Testcontainers.MsSql` in integration
+  test fixtures.
+
+**Preserved (no change):**
+
+- `EFCore.NamingConventions` snake_case stays. The package supports
+  both providers; the DBA team has reviewed the convention and is
+  fine with it.
+- `DateTimeOffset` → `datetimeoffset(7)` on SQL Server (analogous to
+  Postgres `timestamptz`). The `IClock.UtcNow` rule and the banned
+  symbols on `DateTime.UtcNow` stay.
+- `bigint` signed cents for money — same on both providers.
+- The single-shared `PamMessagingDbContext` outbox topology from ADR
+  #26 — MT supports SQL Server outbox via `o.UseSqlServer()`.
+
+**Consequences.**
+
+- The technical wins from ADR #22 (jsonb, partial indexes, exclusion
+  constraints, pg_trgm search) are off the table. PAM was not yet
+  using any of them; future requirements that genuinely need them
+  become "request a Postgres-on-the-side" conversations with IT, not
+  refactors. JSON payload storage falls back to `nvarchar(max)` with
+  `OPENJSON` for query, which is good enough for the audit log's
+  redacted-JSON column.
+- `Testcontainers.MsSql` boot time is significantly slower than
+  `Testcontainers.PostgreSql` on Apple Silicon (Rosetta emulation).
+  CI on amd64 is unaffected. Local integration tests slow down by
+  ~20-30 s per test class fixture; acceptable, document in TESTING.md.
+- Provider-coupled error codes need explicit handling — the
+  `SQLSTATE 23505` pattern that catches concurrent-retry unique
+  violations in `IngestTransactionHandler` becomes a SQL Server
+  error-number check. Helper extension method to abstract.
+- The QA cutover is unblocked. IT can provision a SQL Server instance
+  and the same `dotnet ef database update` pipeline applies.
+
+See [LOCAL_DEV.md](LOCAL_DEV.md) for the updated connection-string +
+docker-compose shape, [INGEST.md](INGEST.md) for the refreshed
+smoke-test commands using `sqlcmd` instead of `psql`, and ADR #22 as
+the historical record of the original (now reversed) call.
+
+---
+
+## 26. Single shared `PamMessagingDbContext` owns the MT outbox — 2026-05-12
+
+**Context.** The 2026-05-12 SOAP smoke test for the 21G listener
+succeeded end-to-end (row in `ingest.vendor_transactions`, audit row
+captured, duplicate replay returned `Duplicate`) but produced **zero
+outbox rows and zero PAM exchanges in RabbitMQ**. Diagnosis revealed a
+structural bug in the per-module outbox topology PAM had inherited
+from the initial scaffold.
+
+What we had:
+
+- Each publishing module (Operators, Ingest, Wallet) called
+  `AddEntityFrameworkOutbox<TDbContext>(...)` against its own
+  DbContext, with the inbox/outbox tables living in its own schema
+  (`operators.outbox_message`, `ingest.outbox_message`, etc.).
+- `OperatorsModule.ConfigureOutbox` was the single caller of
+  `.UseBusOutbox()`, on the theory that one global publish-intercepting
+  filter would route all publishes to the active save's outbox table.
+
+Why that didn't work, verified by direct reflection on
+`MassTransit.EntityFrameworkCoreIntegration` 8.5.9 and confirmed by the
+MassTransit author in
+[discussion #5480](https://github.com/MassTransit/MassTransit/discussions/5480):
+
+- `UseBusOutbox()` swaps the scoped `IScopedBusContextProvider<IBus>`
+  with `EntityFrameworkScopedBusContextProvider<IBus, TDbContext>`.
+  That registration is keyed on the bus type alone — there is only
+  ever one `IScopedBusContextProvider<IBus>` per bus per scope.
+- The provider is bound to ONE DbContext. Every `IPublishEndpoint.Publish`
+  in scope writes the `OutboxMessage` row into that one DbContext's
+  change tracker.
+- The SOAP request path saves `IngestDbContext` but never saves
+  `OperatorsDbContext` — so MT writes the outbox row to a change tracker
+  that is then garbage-collected when the scope ends.
+- The multi-DbContext outbox overload `AddEntityFrameworkOutbox<TBus, TDbContext>`
+  arrived in MT 9.1, which is on the commercial Massient license and
+  off-limits while we hold the Apache-2.0 line (ADR #5).
+
+**Decision.** A single `PamMessagingDbContext` (schema `messaging`) owns
+the MT inbox/outbox tables. `AddPamMassTransit` (in
+`Pam.Shared.Messaging`) is the only place `UseBusOutbox()` is called,
+on this one context. No per-module `ConfigureOutbox` hooks. Module
+DbContexts no longer carry `AddInboxStateEntity`/`AddOutboxMessageEntity`/
+`AddOutboxStateEntity`; a `RemoveOutboxTables` migration in each module
+drops the now-orphaned per-module tables.
+
+Bridge handlers continue to call `IPublishEndpoint.Publish` unchanged.
+The bus-wide outbox routes each call's `OutboxMessage` row into
+`PamMessagingDbContext`'s change tracker. An `OutboxFlushBehavior`
+MediatR pipeline behavior (registered as innermost, after `AuditBehavior`)
+calls `messaging.SaveChangesAsync` at the tail of every command — that
+commits the queued outbox rows; `BusOutboxNotification` immediately
+wakes `BusOutboxDeliveryService<PamMessagingDbContext>`, which publishes
+to RabbitMQ and removes the delivered rows. End-to-end latency in the
+local smoke test is sub-second.
+
+**Atomicity caveat (accepted, time-bounded).** The business `SaveChanges`
+(module DbContext) and the outbox `SaveChanges` (messaging DbContext)
+run in **separate transactions** at present. A process crash between
+the business commit and the outbox commit leaves the business row
+persisted but the integration event undelivered — an at-most-once
+failure on the specific request, recoverable only by reconciliation.
+
+We pick this trade-off over the alternatives because:
+
+- The MT author's
+  [endorsed pattern](https://github.com/MassTransit/MassTransit/discussions/5480)
+  for 8.5.x multi-module monoliths is exactly this shared-context
+  shape; the upgrade to true cross-context atomicity is a known
+  follow-up.
+- The textbook fix — sharing one `NpgsqlConnection` + one
+  `IDbContextTransaction` between business and messaging DbContexts —
+  is real but invasive: every `AddDbContext<T>` registration must resolve
+  the ambient connection from a scoped service, a MediatR pipeline
+  behavior must `BeginTransactionAsync` before any DbContext queries,
+  and each business DbContext must `UseTransactionAsync` on first save.
+  EF's `AutoTransactionBehavior` would need to be overridden. Doable;
+  not today's priority.
+- Custom `IScopedBusContextProvider<IBus>` routing (resolve the right
+  per-DbContext provider based on which save is currently active) was
+  evaluated and rejected: phatboyg has called this "custom development"
+  not supported by MT, the interface is undocumented in 8.5, and the
+  routing must answer "which DbContext is in scope" at *publish time*
+  via an `AsyncLocal` set from the dispatch interceptor. Fragile.
+- MultiBus does not help — the outbox is `IBus`-only pre-9.1 per
+  [discussion #4435](https://github.com/MassTransit/MassTransit/discussions/4435).
+
+Follow-ups (logged in [ROADMAP.md](ROADMAP.md)):
+
+- Implement shared-connection-shared-transaction atomicity, OR
+- Migrate to MT 9.1 per-DbContext outbox once the licensing question
+  is resolved.
+- A reconciliation job that diff-checks business rows against
+  delivered events lands as a defensive backstop regardless of which
+  path above we pick.
+
+**Consequences.**
+
+- One delivery service (`BusOutboxDeliveryService<PamMessagingDbContext>`)
+  instead of three. One Postgres advisory-lock loop. Cross-module
+  message ordering is now globally consistent without coordination.
+- Adding a new publishing module = add a domain event + bridge handler,
+  done. No outbox plumbing per module.
+- The `messaging` schema is touched by every command pipeline that
+  publishes. It's a write-hot table. Monitor accordingly.
+- We carry an under-deliver risk until atomicity work lands — bounded
+  by request-tail-time (~ms) and recoverable via reconciliation.
+- `MassTransit.EntityFrameworkCore` is now referenced only by
+  `Pam.Shared.Messaging`. Module csprojs lost the package reference.
+- The smoke test's verification commands are documented in
+  [INGEST.md](INGEST.md) "Phase A SOAP listener" section, including
+  the "outbox in steady state is empty (rows are removed after
+  delivery)" gotcha that tripped me up during initial verification.
+
+See [INGEST.md](INGEST.md) for the verified smoke-test commands,
+[ARCHITECTURE.md](ARCHITECTURE.md) "Outbox + pre-save domain-event
+dispatch" for the publish pipeline, and `Pam.Shared.Messaging/` for
+the implementation.
+
+---
+
 ## 25. `Pam.Ingest` — vendor-adapter pattern + four-phase GBS strangler — 2026-05-12
 
 **Context.** The CTO doc's CS Part 1 ("Unified Transaction View")
@@ -53,11 +275,13 @@ not bake assumptions about wallet authority into the ingest layer
     Rejected`) separates lifecycle state from storage. GBS's
     "non-posted vs posted" UX collapses into status transitions.
 
-- **Outbox-from-day-one.** `IngestModule.ConfigureOutbox` wires
-  MassTransit EF Core outbox on `IngestDbContext`. The
-  `TransactionIngestedDomainHandler` publish runs inside the same
-  transaction as the row insert; the outbox delivery service forwards
-  to RabbitMQ. Crash between commit and broker can't drop the event.
+- **Outbox-from-day-one.** Bridge handler
+  (`TransactionIngestedDomainHandler`) calls `IPublishEndpoint.Publish`;
+  the bus-wide outbox in `Pam.Shared.Messaging` (ADR #26) routes the
+  message into `PamMessagingDbContext`, which the `OutboxFlushBehavior`
+  pipeline commits at the tail of the command. The delivery service
+  forwards to RabbitMQ. See ADR #26 for the atomicity trade-off
+  currently accepted between business and outbox commits.
 
 - **Four-phase strangler migration**, deliberately shippable
   independently per vendor:
@@ -210,7 +434,14 @@ Why .NET wins this specific workload:
 
 ---
 
-## 22. Postgres over MS SQL Server — 2026-05-12
+## 22. Postgres over MS SQL Server — 2026-05-12 (SUPERSEDED by ADR #27, same day)
+
+> **Superseded later the same day** by [ADR #27](#27-database-platform-sql-server-supersedes-adr-22--2026-05-12). The stakeholder meeting flipped the call to SQL Server on
+> operational grounds (DBA expertise + existing licensed infra). The
+> historical reasoning below is preserved as the record of why we
+> initially chose Postgres on technical grounds — none of those points
+> were wrong, they just weren't load-bearing once operational realities
+> entered the conversation.
 
 **Context.** GBS runs on MS SQL Server. The CTO evaluation doc listed
 "DB: MS SQL Server?" with a question mark. We picked Postgres 17 from

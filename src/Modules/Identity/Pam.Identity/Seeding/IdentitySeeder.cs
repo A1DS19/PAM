@@ -33,27 +33,33 @@ public sealed class IdentitySeeder(
     ILogger<IdentitySeeder> logger
 )
 {
-    // Advisory-lock keys are signed int64. The 100_000–100_999 range is
-    // reserved for module bootstrap seeders; future modules add their
-    // own constant in that range to keep concurrent-boot races impossible
-    // even when multiple modules seed in parallel.
-    private const long SeederLockKey = 100_001L;
+    // Advisory-lock resource name. SQL Server's sp_getapplock takes a
+    // string resource identifier scoped to the current DB. The
+    // "pam:seeder:*" prefix is reserved for module bootstrap seeders;
+    // future modules add their own constant under that prefix to keep
+    // concurrent-boot races impossible even when multiple modules seed
+    // in parallel.
+    private const string SeederLockResource = "pam:seeder:identity";
 
     public async Task SeedAsync(CancellationToken ct)
     {
-        // Postgres advisory lock — replicas booting concurrently serialise
-        // through this lock so UNIQUE-constraint races on permissions /
-        // roles / OpenIddict app rows can't happen. Lock is
-        // transaction-scoped (xact variant) so it releases automatically
-        // on commit or rollback. Once the first replica finishes, the
-        // others acquire, find each step's precondition satisfied
-        // (idempotent), and commit quickly.
+        // SQL Server application lock — replicas booting concurrently
+        // serialise through this lock so UNIQUE-constraint races on
+        // permissions / roles / OpenIddict app rows can't happen. Lock
+        // owner is 'Transaction' so it releases automatically on commit
+        // or rollback. Once the first replica finishes, the others
+        // acquire, find each step's precondition satisfied (idempotent),
+        // and commit quickly.
         //
         // EF migrations already take their own __EFMigrationsHistory lock
         // and run before this method; this lock only guards seeding.
+        //
+        // LockTimeout = -1 → wait indefinitely. Boot time stays short
+        // because each replica's seed is idempotent + fast once the row
+        // shape is in place.
         await using var tx = await db.Database.BeginTransactionAsync(ct);
         await db.Database.ExecuteSqlAsync(
-            $"SELECT pg_advisory_xact_lock({SeederLockKey})",
+            $"EXEC sp_getapplock @Resource = {SeederLockResource}, @LockMode = 'Exclusive', @LockOwner = 'Transaction', @LockTimeout = -1",
             ct
         );
 

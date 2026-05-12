@@ -60,9 +60,9 @@ serve traffic alongside the first:
   swapping the file and rolling restarts. Development keeps the
   persisted self-signed certs from `AddDevelopment*Certificate`.
 
-**Why Postgres for DP keys, not Redis.** Security material shouldn't be
+**Why SQL Server for DP keys, not Redis.** Security material shouldn't be
 tied to cache availability — losing Redis (cache) shouldn't invalidate
-every cookie. Identity already has Postgres, so no new dependency.
+every cookie. Identity already has SQL Server, so no new dependency.
 
 **Why PFX files, not env-var-base64-PFX.** Maps cleanly to k8s
 Secret-mounted-as-file, systemd `LoadCredential=`, and Swarm secrets.
@@ -98,20 +98,23 @@ failed `SaveChanges` after a successful publish leaves a phantom event
 referring to a row that never existed. Both produce states consumers
 and audit can't recover.
 
-**Wiring.** `MassTransit.EntityFrameworkCore` on Pam.Operators;
-`OperatorsDbContext` adds inbox/outbox model entities.
-`OperatorsModule.ConfigureOutbox` composes the bus-side outbox setup
-(`UsePostgres`, `UseBusOutbox`, `QueryDelay`, `DuplicateDetectionWindow`);
-`Program.cs` passes it through `AddPamMassTransit`'s new `configureBus`
-parameter. Future publishing modules add their delegate the same way.
+**Wiring.** `MassTransit.EntityFrameworkCore` lives only in
+`Pam.Shared.Messaging`. `PamMessagingDbContext` (schema `messaging`)
+owns inbox/outbox model entities. `AddPamMassTransit` is the only call
+site for `AddEntityFrameworkOutbox<PamMessagingDbContext>` +
+`UseBusOutbox()`, configured with `UseSQL Server`, `QueryDelay`, and
+`DuplicateDetectionWindow`. No per-module `ConfigureOutbox` hooks —
+adding a new publisher is just a domain event + bridge handler. See
+DECISIONS.md ADR #26 for the architectural rationale.
 
-**Pre-save dispatch.** `DispatchDomainEventsInterceptor` moves from
-`SavedChangesAsync` to `SavingChangesAsync`. This is the precondition
-for the outbox — handlers' `IPublishEndpoint.Publish` calls now enrol
-in the same transaction as the `SaveChanges` that triggered them, so
-`outbox_message` rows commit atomically with the aggregate write. A
-background `EntityFrameworkOutboxDeliveryService` polls the table and
-forwards to RabbitMQ.
+**Pre-save dispatch.** `DispatchDomainEventsInterceptor` runs in
+`SavingChangesAsync` (pre-save on the business DbContext). Bridge
+handlers' `IPublishEndpoint.Publish` calls enrol in the bus-wide
+outbox, writing `OutboxMessage` rows into `PamMessagingDbContext`'s
+change tracker. `OutboxFlushBehavior` (innermost MediatR pipeline
+behavior) commits those rows at the tail of every command;
+`BusOutboxNotification` wakes `BusOutboxDeliveryService<PamMessagingDbContext>`,
+which forwards to RabbitMQ and removes delivered rows.
 
 **Trade-offs locked in.**
 - Domain handlers see pre-commit state. Queries against freshly-written
@@ -130,7 +133,7 @@ EF migrations already serialise through `__EFMigrationsHistory`, but
 seeding had no such lock.
 
 `IdentitySeeder.SeedAsync` is now wrapped in a transaction +
-`pg_advisory_xact_lock(100_001)`. The `xact` variant releases on
+`sp_getapplock(100_001)`. The `xact` variant releases on
 commit/rollback so a crash mid-seed doesn't orphan the lock. Once
 replica A finishes, replica B acquires, finds every step's
 precondition met (idempotent), commits quickly.
@@ -143,7 +146,7 @@ modules don't have to think about lock-key collisions per-module.
 Three pieces ROADMAP gated Wallet on.
 
 **Integration tests** (`tests/Pam.IntegrationTests/`)
-- `PamContainersFixture` boots Postgres 17 + RabbitMQ 4 + Redis 7 via
+- `PamContainersFixture` boots SQL Server 2022 + RabbitMQ 4 + Redis 7 via
   Testcontainers, shared as an `ICollectionFixture` so the ~10–20s
   boot cost is paid once per test session.
 - `PamApiFactory : WebApplicationFactory<Program>` overrides
@@ -199,22 +202,18 @@ fixed-length 3. Real double-entry ledger (`LedgerEntry` /
 `Transaction` with sum-to-zero invariants, balance snapshots,
 multi-currency conversion) lands in follow-up PRs.
 
-**Wallet outbox is wired on day one.** `WalletDbContext.OnModelCreating`
-calls `AddInboxStateEntity / AddOutboxMessageEntity / AddOutboxStateEntity`;
-the initial migration provisions the tables;
-`WalletModule.ConfigureOutbox` is composed with
-`OperatorsModule.ConfigureOutbox` in `Program.cs`'s call to
-`AddPamMassTransit`. Ledger writes will commit atomically with their
-`LedgerEntryPosted` integration event from the very first feature PR
-— non-negotiable per ARCHITECTURE.md.
+**Wallet outbox is covered from day one** by the shared
+`PamMessagingDbContext` (see ADR #26). No per-module wiring needed.
+Once the ledger feature PR ships, `LedgerEntryPosted` bridges through
+the same bus-wide outbox as every other publisher.
 
 ## Where this leaves the assessment
 
 | Capability | Before | After |
 |---|---|---|
-| Run N>1 replicas behind a load balancer | No — cookies/tokens/rate-limit state per-instance | Yes — shared via Postgres + Redis |
-| Integration events survive a crash | No — publish-then-commit-fail loses messages | Yes — outbox commits atomically with the row |
-| Concurrent-replica boot | Race on UNIQUE constraints in seed | Serialised on `pg_advisory_xact_lock` |
+| Run N>1 replicas behind a load balancer | No — cookies/tokens/rate-limit state per-instance | Yes — shared via SQL Server + Redis |
+| Integration events survive a crash | No — publish-then-commit-fail loses messages | Mostly — bus-wide outbox in `PamMessagingDbContext` queues every publish; sub-millisecond under-deliver window remains between business + outbox commits, closed by atomicity follow-up in ROADMAP item #1 |
+| Concurrent-replica boot | Race on UNIQUE constraints in seed | Serialised on `sp_getapplock` |
 | End-to-end debugging across async flows | Partial — OTel covers HTTP↔HTTP only | CorrelationId fills the async gap |
 | Telemetry leaves the process | No | OTLP traces + metrics + logs |
 | Module-boundary rules enforced | Code review only | NetArchTest gate |

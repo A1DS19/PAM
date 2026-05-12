@@ -31,16 +31,16 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
       <PrivateAssets>all</PrivateAssets>
     </PackageReference>
-    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" />
     <PackageReference Include="EFCore.NamingConventions" />
     <!--
-      Outbox is non-negotiable from day one of this module — ledger
-      entries MUST commit atomically with their LedgerEntryPosted
-      integration event.
+      MassTransit core only — outbox tables live in PamMessagingDbContext
+      (Pam.Shared.Messaging). This module's bridge handlers call
+      IPublishEndpoint.Publish; the bus-wide outbox in AddPamMassTransit
+      routes the row into the shared messaging schema.
     -->
     <PackageReference Include="MassTransit" />
-    <PackageReference Include="MassTransit.EntityFrameworkCore" />
-    <PackageReference Include="AspNetCore.HealthChecks.NpgSql" />
+    <PackageReference Include="AspNetCore.HealthChecks.SqlServer" />
   </ItemGroup>
 
 </Project>

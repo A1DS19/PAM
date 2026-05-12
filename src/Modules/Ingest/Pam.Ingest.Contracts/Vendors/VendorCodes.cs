@@ -6,7 +6,7 @@ namespace Pam.Ingest.Contracts.Vendors;
 // to register routes and to discriminate rows.
 //
 // Lowercase, no spaces — these flow into URL path segments
-// (/v1/ingest/vendors/<code>) and Postgres lookups.
+// (/v1/ingest/vendors/<code>) and SQL Server lookups.
 public static class VendorCodes
 {
     public const string TwentyOneG = "21g";

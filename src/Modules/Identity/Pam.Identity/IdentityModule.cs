@@ -54,15 +54,15 @@ public static class IdentityModule
                     sp.GetRequiredService<AuditableSaveChangesInterceptor>(),
                     sp.GetRequiredService<DispatchDomainEventsInterceptor>()
                 );
-                options.UseNpgsql(
+                options.UseSqlServer(
                     connectionString,
-                    npg =>
+                    sql =>
                     {
-                        npg.MigrationsHistoryTable(
+                        sql.MigrationsHistoryTable(
                             "__EFMigrationsHistory",
                             IdentityDbContext.Schema
                         );
-                        npg.MigrationsAssembly(typeof(IdentityDbContext).Assembly.FullName);
+                        sql.MigrationsAssembly(typeof(IdentityDbContext).Assembly.FullName);
                     }
                 );
                 options.UseSnakeCaseNamingConvention();
@@ -290,9 +290,9 @@ public static class IdentityModule
                 //          request, instead of waiting for the security-stamp
                 //          validation window (~30min default).
                 //
-                //   Cons — 2 extra Postgres lookups per authenticated request.
+                //   Cons — 2 extra SQL Server lookups per authenticated request.
                 //          Both are PK reads on indexed columns (sub-ms), and
-                //          Postgres caches them in shared buffers. Fine for the
+                //          SQL Server caches them in shared buffers. Fine for the
                 //          back-office surface (~tens to low-hundreds of
                 //          operators). Becomes a problem if/when we wire a
                 //          high-throughput surface like Pam.GameWallet
@@ -309,7 +309,7 @@ public static class IdentityModule
 
         services
             .AddHealthChecks()
-            .AddNpgSql(connectionString, name: "identity-db", tags: ["ready", "module:identity"]);
+            .AddSqlServer(connectionString, name: "identity-db", tags: ["ready", "module:identity"]);
 
         return services;
     }

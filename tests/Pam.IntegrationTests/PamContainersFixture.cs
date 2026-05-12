@@ -1,24 +1,24 @@
-using Testcontainers.PostgreSql;
+using Testcontainers.MsSql;
 using Testcontainers.RabbitMq;
 using Testcontainers.Redis;
 using Xunit;
 
 namespace Pam.IntegrationTests;
 
-// Boots Postgres 17 + RabbitMQ 4 + Redis 7 in throwaway containers for
-// the duration of the test session. Used as an ICollectionFixture so the
-// startup cost (~10–20s) is paid once across every integration test.
+// Boots SQL Server 2022 + RabbitMQ 4 + Redis 7 in throwaway containers
+// for the duration of the test session. Used as an ICollectionFixture so
+// the startup cost is paid once across every integration test.
 //
-// Each container picks its own ephemeral host port — multiple test runs
-// don't clash with each other or with the dev-loop containers from
-// docker-compose.yml.
+// SQL Server boot on Apple Silicon is slow (~30–60s under Rosetta) — CI
+// runs on amd64 where it's much faster. Each container picks its own
+// ephemeral host port; multiple test runs don't clash with each other
+// or with the dev-loop containers from docker-compose.yml.
 public sealed class PamContainersFixture : IAsyncLifetime
 {
-    public PostgreSqlContainer Postgres { get; } =
-        new PostgreSqlBuilder("postgres:17")
-            .WithDatabase("pam")
-            .WithUsername("pam")
-            .WithPassword("pam_test_password")
+    public MsSqlContainer Sql { get; } =
+        new MsSqlBuilder("mcr.microsoft.com/mssql/server:2022-latest")
+            // Must meet SA password complexity (>=8 chars, mixed case, digit, special).
+            .WithPassword("Pam_test_password_123!")
             .Build();
 
     public RabbitMqContainer Rabbit { get; } =
@@ -28,13 +28,13 @@ public sealed class PamContainersFixture : IAsyncLifetime
 
     public async ValueTask InitializeAsync()
     {
-        await Task.WhenAll(Postgres.StartAsync(), Rabbit.StartAsync(), Redis.StartAsync());
+        await Task.WhenAll(Sql.StartAsync(), Rabbit.StartAsync(), Redis.StartAsync());
     }
 
     public async ValueTask DisposeAsync()
     {
         await Task.WhenAll(
-            Postgres.DisposeAsync().AsTask(),
+            Sql.DisposeAsync().AsTask(),
             Rabbit.DisposeAsync().AsTask(),
             Redis.DisposeAsync().AsTask()
         );

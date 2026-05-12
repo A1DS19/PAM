@@ -26,7 +26,7 @@ public sealed class CreateBrandEndpoint : ICarterModule
                 """
                 Creates a new operator brand record (name, slug, jurisdiction). The
                 slug is the public, URL-safe handle and must be unique across the
-                tenant — a Postgres UNIQUE constraint backs the uniqueness check.
+                tenant — a SQL Server UNIQUE constraint backs the uniqueness check.
 
                 **Auth:** requires `operators.brands.write` permission.
 

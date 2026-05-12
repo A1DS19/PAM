@@ -5,36 +5,112 @@ What's deferred and the trigger that should bring each forward.
 ## Up next — ordered punch-list
 
 Phase 3 (`Pam.Identity`) is complete across three PRs. The
-`Pam.Ingest` module is scaffolded (2026-05-12) with the canonical
-write path, idempotency, outbox, and a 21G stub adapter; Phase A of
-its strangler migration is the next implementation milestone post-June 1.
+`Pam.Ingest` module is scaffolded; the 21G SoapCore listener landed
+2026-05-12 and was smoke-tested end-to-end (SOAP envelope → persist
+→ audit → idempotent replay). The outbox-publish path was diagnosed
+the same day, refactored to a shared `PamMessagingDbContext` (schema
+`messaging`) per DECISIONS.md ADR #26, and re-verified end-to-end —
+`Pam.Ingest.Contracts.*:TransactionIngestedIntegrationEvent` now
+declares in RabbitMQ and the `Flushed N outbox row(s)` debug line
+fires per command.
 
-1. **`Pam.Ingest` Phase A — intercept-and-forward.** Real 21G SOAP
-   listener (replace the JSON stub), real vendor auth (validate
-   systemId+systemPassword against a credentials table), and an
-   `IGbsRelay` that proxies the original request to GBS's existing
-   endpoint while PAM persists the canonical row. Zero functional
-   change to GBS; PAM gains a clean parallel transaction stream.
-   See [INGEST.md](INGEST.md) and [DECISIONS.md](DECISIONS.md) #25.
-2. **Re-introduce `Pam.Players`** (module #3). Player aggregate scoped
+1. **Cross-context outbox atomicity (currently a separate-transaction
+   gap).** The shared-messaging-DbContext fix in ADR #26 routes every
+   publish into `messaging.outbox_message` correctly, but the business
+   `SaveChanges` (module DbContext) and the outbox `SaveChanges`
+   (messaging DbContext) commit in **separate transactions**. A crash
+   between the two leaves the business row persisted and the
+   integration event undelivered — a sub-millisecond at-most-once
+   window, but a real one. Two paths forward, pick by Phase B:
+   (a) shared `NpgsqlConnection` + shared `IDbContextTransaction` across
+   both DbContexts (each `AddDbContext<T>` resolves the ambient
+   connection from a scoped service; a MediatR pipeline behavior
+   begins the transaction before queries; `AutoTransactionBehavior` is
+   overridden), or (b) upgrade `MassTransit.EntityFrameworkCore` to
+   9.1 once the commercial-license question is resolved and use the
+   per-DbContext `AddEntityFrameworkOutbox<TBus, TDbContext>`
+   overload. A reconciliation job that diff-checks business rows
+   against delivered events lands as a defensive backstop regardless.
+2. **`Pam.Ingest` Phase A — intercept-and-forward.** Five concrete
+   sub-tasks, ordered for short-PR delivery; each item is the next
+   session's starting point if the one above merges. The column names
+   match what the 2026-05-12 stakeholder meeting locked in (see the
+   `pam_meeting_2026_05_12` memory entry).
+
+   - **2a. Schema additions migration** on
+     `ingest.vendor_transactions`:
+     `customer_id` (`nvarchar(64)`, indexed — CS UI's primary lookup),
+     `transaction_type` (`nvarchar(32)` — vendor sub-classification under `kind`),
+     `daily_figure_date` (`date` — promoted from being parsed into `occurred_at`),
+     `available_balance_cents` (`bigint`, nullable until IGbsRelay
+     lands — comes from GBS's response, not the vendor request),
+     `gbs_reference` (`nvarchar(64)`, nullable — populated with GBS's
+     `<DocumentNumber>` once IGbsRelay lands),
+     plus make `brand_id` and `player_id` nullable (Phase A submits
+     `null` today; Players module #3 backfills later).
+     The `TwentyOneGCustomerTransactionService` populates `customer_id`
+     and `transaction_type` directly from the SOAP envelope; the rest
+     of the new columns are owned by IGbsRelay (2b).
+
+   - **2b. `IGbsRelay` HTTP-forwarder.** Interface lives in
+     `Pam.Ingest/Vendors/IGbsRelay.cs`; concrete impl
+     `GbsHttpRelay` POSTs the original SOAP envelope verbatim to GBS
+     (`api.betanything.eu/integrations/21GCasino/CustomerTransaction21G.asmx`),
+     parses GBS's `<DocumentNumber>`, `<RespMessage>`, and
+     `<AvailableBalance>` out of the SOAP body. The Phase-A listener
+     persists the row first, then calls the relay, then UPDATEs the
+     row with GBS's response fields, then returns GBS's reply *verbatim*
+     to the vendor. Cancellation token + 5s timeout + retry policy
+     (single retry on transient 5xx) on the HttpClient.
+
+   - **2c. Real vendor auth** via `ingest.vendor_credentials`
+     (vendor_id + system_id + password_hash + active flag). Replaces
+     the current stub `if (string.IsNullOrEmpty(systemID))` check.
+     Hashing scheme: same `IPasswordHasher<>` used by Identity (no
+     reason to invent a second one). Credential seeding via env var on
+     first boot, same shape as `PAM_BOOTSTRAP_OWNER_*`.
+
+   - **2d. CS read endpoint** `GET /v1/ingest/transactions?customerId=&page=&pageSize=`
+     for Rodolfo + Milton's customer-service site. Cursor-based
+     pagination (`?cursor=<last_received_at>` rather than `page=`)
+     because the table grows append-only. Response includes
+     `running_balance_cents` server-computed via `SUM(amount_cents) OVER (ORDER BY received_at ROWS UNBOUNDED PRECEDING)`.
+     P&L roll-ups (`/v1/ingest/transactions/pnl?customerId=&granularity=day|week|month|year|lifetime`)
+     land as a separate endpoint same PR — the meeting was specific
+     about needing them in the UI.
+
+   - **2e. nginx + QA coordination with Jorge Ocampo (BA).** Share
+     PAM's QA host name + path prefix so the nginx reverse-proxy
+     rule routes
+     `https://21g-vendor-domain/integrations/21GCasino/*.asmx` to
+     PAM's QA instance verbatim. Confirm with IT that the QA host is
+     up and PAM can deploy. Also confirm the QA SQL Server connection
+     string + that it's reachable from the QA host. No code change
+     this item — coordination only.
+
+   See [INGEST.md](INGEST.md) for the listener's current state and
+   [DECISIONS.md](DECISIONS.md) #25 for the four-phase strangler
+   rationale and #27 for the SQL Server platform decision.
+3. **Re-introduce `Pam.Players`** (module #3). Player aggregate scoped
    under a `Brand`, authenticated via the embedded IDP under a separate
    audience (`pam_player_api`). Self-service registration + KYC +
    sessions + limits land as sub-aggregates of the same module.
    `IPlayerLookup` from `Pam.Players.Contracts` unblocks Ingest's
    adapter-side player-id resolution.
-3. **Ingest Phase B — emit integration events.** With Players in
-   place, `TransactionIngestedIntegrationEvent` starts being meaningful
-   to downstream modules. First consumer is `Pam.Notifications`
-   (transaction receipts via `IEmailSender`); next is the Databricks
-   ingest swap (read PAM's stream instead of GBS's joins).
-4. **Test gate before module #4** — outbox + integration tests
-   (Testcontainers: real Postgres) + arch tests (`NetArchTest.Rules`).
+4. **Ingest Phase B — emit integration events.** With the outbox path
+   fixed (#1) and Players in place, `TransactionIngestedIntegrationEvent`
+   starts being meaningful to downstream modules. First consumer is
+   `Pam.Notifications` (transaction receipts via `IEmailSender`);
+   next is the Databricks ingest swap (read PAM's stream instead of
+   GBS's joins).
+5. **Test gate before module #4** — outbox + integration tests
+   (Testcontainers: real SQL Server) + arch tests (`NetArchTest.Rules`).
    See [Outbox](#outbox--transactional-integration-event-publishing) and
    [Tests](#tests).
-5. **Module #4 — `Pam.Wallet`** (double-entry ledger). Outbox is
+6. **Module #4 — `Pam.Wallet`** (double-entry ledger). Outbox is
    non-negotiable from day one of that module. See
    [the build order](#modules-not-yet-built) below.
-6. **`Pam.Notifications` expansion** — module skeleton +
+7. **`Pam.Notifications` expansion** — module skeleton +
    `IEmailSender` are in place (`Pam.Notifications` +
    `Pam.Notifications.Contracts`). Still to come: integration-event
    consumers (the `Consumers/` folder is empty, waiting for Players
@@ -42,13 +118,13 @@ its strangler migration is the next implementation milestone post-June 1.
    send-audit-log DbContext, SMS + push transports. Each piece lands
    when the first consumer needs it. See *Notifications and
    cross-module email* in ARCHITECTURE.md for the pattern.
-7. **Ingest Phase C — PAM authoritative for one vendor.** Pick the
+8. **Ingest Phase C — PAM authoritative for one vendor.** Pick the
    lowest-traffic vendor (Pocket or 21G). PAM stops forwarding for
    that vendor and posts to GBS's wallet directly (Phase C) or, once
    `Pam.Wallet` ships, through to it (Phase C'). A one-way sync job
    keeps `tbCasinoPlayToday` populated so Crystal Reports keep
    working.
-8. **Ingest Phase D — Listo.** All vendors migrated; GBS casino write
+9. **Ingest Phase D — Listo.** All vendors migrated; GBS casino write
    path retired; `tbCasinoPlayToday` becomes a read-only view fed
    from `ingest.vendor_transactions`. Last step before the broader
    GBS retirement.
@@ -90,8 +166,8 @@ Phase 3 ships across three PRs.
   application descriptor (public client, PKCE required, redirect URIs
   from `Identity:BackOfficeSpa` config), and the bootstrap Owner from
   `PAM_BOOTSTRAP_OWNER_EMAIL` / `PAM_BOOTSTRAP_OWNER_PASSWORD` env vars
-  (only seeded if no Owner exists). Wrapped in a Postgres
-  `pg_advisory_xact_lock` (key 100_001) so concurrent replica boots
+  (only seeded if no Owner exists). Wrapped in a SQL Server
+  `sp_getapplock` (key 100_001) so concurrent replica boots
   serialise through the seed and can't race UNIQUE constraints.
 - Cookie-challenge redirect to the React SPA's `LoginUrl?returnUrl=…`
   for browser navigations; JSON / `/v1/*` requests get 401 instead.
@@ -203,25 +279,37 @@ shape (lockout, password policy) carried over; `pro-cr-billing`'s custom
 JWT + RefreshToken rotation NOT carried over (OpenIddict's token storage
 replaces it).
 
-### Outbox + transactional integration-event publishing — SHIPPED
+### Outbox + transactional integration-event publishing — SHIPPED (re-architected 2026-05-12)
 
-MassTransit EF Core outbox is wired on `OperatorsDbContext`. Integration
-events published from inside a `SaveChanges` scope
-(`BrandCreatedDomainHandler` and equivalents) write to `outbox_message`
-in the same transaction as the aggregate write; an
-`EntityFrameworkOutboxDeliveryService` forwards to RabbitMQ.
+MassTransit EF Core outbox is wired on a single shared
+`PamMessagingDbContext` (schema `messaging`, in `Pam.Shared.Messaging`).
+`AddPamMassTransit` is the only call site for `UseBusOutbox()`. Module
+DbContexts don't carry outbox entities and don't register their own
+outboxes — a critical structural change forced by MT 8.5.x's
+single-DbContext-per-bus constraint. Full rationale + alternatives
+considered in DECISIONS.md ADR #26.
 
-`DispatchDomainEventsInterceptor` moved from post-save to pre-save so
-the dispatch happens inside the transaction. See *Outbox + pre-save
-domain-event dispatch* in ARCHITECTURE.md for the new semantics and
-their trade-offs.
+Integration events published from inside a business `SaveChanges`
+scope (`BrandCreatedDomainHandler`, `TransactionIngestedDomainHandler`,
+and equivalents) write `OutboxMessage` rows into the messaging
+context's change tracker; `OutboxFlushBehavior` (innermost MediatR
+pipeline behavior) commits them at command-tail; the delivery service
+forwards to RabbitMQ. End-to-end latency in the local smoke test is
+sub-second.
 
-Per-module wiring: each publishing module exposes a
-`ConfigureOutbox(IBusRegistrationConfigurator)` delegate, composed in
-`Program.cs`'s call to `AddPamMassTransit`. Adding a new publisher
-takes three steps (package, EF model entities, ConfigureOutbox).
+`DispatchDomainEventsInterceptor` runs pre-save inside the business
+DbContext's `SaveChanges` so the dispatch happens inside the business
+transaction. See *Outbox + pre-save domain-event dispatch* in
+ARCHITECTURE.md for the new semantics and the currently-accepted
+under-deliver caveat (item #1 in *Up next* covers the atomicity
+follow-up).
 
-**For Wallet, this stays non-negotiable on day one of that module.**
+Adding a new publisher takes one step: define a domain event + bridge
+handler that calls `IPublishEndpoint.Publish`. No outbox plumbing per
+module.
+
+**For Wallet, this is non-negotiable on day one of that module** —
+already covered by the shared messaging context.
 
 ### Audit module
 
@@ -352,7 +440,7 @@ extraction-to-microservice plan. 8 tests; sub-second run.
   *Architecture tests — SHIPPED* above.
 - **Integration tests**: `tests/Pam.IntegrationTests` boots the API
   via `WebApplicationFactory<Program>` against Testcontainers
-  (Postgres 17, RabbitMQ 4, Redis 7). `PamContainersFixture` is a
+  (SQL Server 2022, RabbitMQ 4, Redis 7). `PamContainersFixture` is a
   shared `ICollectionFixture` so the ~10–20s container boot cost is
   paid once. Initial coverage: live + ready health probes, anonymous
   `POST /v1/operators/brands` → 401. 3 tests, ~3s including container

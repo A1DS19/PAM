@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace Pam.Players.Data.Migrations
 {
     /// <inheritdoc />
-    public partial class InitialPlayer : Migration
+    public partial class InitialPlayers : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -19,15 +19,15 @@ namespace Pam.Players.Data.Migrations
                 schema: "players",
                 columns: table => new
                 {
-                    id = table.Column<Guid>(type: "uuid", nullable: false),
-                    brand_id = table.Column<Guid>(type: "uuid", nullable: false),
-                    email = table.Column<string>(type: "character varying(256)", maxLength: 256, nullable: false),
-                    created_at = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: false),
-                    created_by_type = table.Column<string>(type: "character varying(16)", maxLength: 16, nullable: false),
-                    created_by_id = table.Column<string>(type: "character varying(128)", maxLength: 128, nullable: false),
-                    last_modified_at = table.Column<DateTimeOffset>(type: "timestamp with time zone", nullable: true),
-                    last_modified_by_type = table.Column<string>(type: "character varying(16)", maxLength: 16, nullable: true),
-                    last_modified_by_id = table.Column<string>(type: "character varying(128)", maxLength: 128, nullable: true)
+                    id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                    brand_id = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
+                    email = table.Column<string>(type: "nvarchar(256)", maxLength: 256, nullable: false),
+                    created_at = table.Column<DateTimeOffset>(type: "datetimeoffset", nullable: false),
+                    created_by_type = table.Column<string>(type: "nvarchar(16)", maxLength: 16, nullable: false),
+                    created_by_id = table.Column<string>(type: "nvarchar(128)", maxLength: 128, nullable: false),
+                    last_modified_at = table.Column<DateTimeOffset>(type: "datetimeoffset", nullable: true),
+                    last_modified_by_type = table.Column<string>(type: "nvarchar(16)", maxLength: 16, nullable: true),
+                    last_modified_by_id = table.Column<string>(type: "nvarchar(128)", maxLength: 128, nullable: true)
                 },
                 constraints: table =>
                 {

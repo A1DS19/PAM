@@ -453,8 +453,8 @@ Effect: every API call cross-checks the access token's row in
 `inactive`, the call 401s. **Revocation is therefore effectively
 instant** — kill the row, every subsequent call dies.
 
-**Cost**: 2 extra Postgres lookups per authenticated request. Both are
-PK reads on indexed columns; sub-ms each; Postgres caches them in
+**Cost**: 2 extra SQL Server lookups per authenticated request. Both are
+PK reads on indexed columns; sub-ms each; SQL Server caches them in
 shared buffers. For the back-office surface (tens to low-hundreds of
 operators) this is fine. For the future `Pam.GameWallet` host
 (sub-200ms p99, thousands of req/s) it would not be — that host should

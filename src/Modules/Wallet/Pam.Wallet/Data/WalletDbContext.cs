@@ -1,4 +1,3 @@
-using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Pam.Wallet.Accounts.Models;
 
@@ -16,14 +15,9 @@ public sealed class WalletDbContext(DbContextOptions<WalletDbContext> options)
         modelBuilder.HasDefaultSchema(Schema);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(WalletDbContext).Assembly);
 
-        // Outbox model on day one — even before the first feature ships,
-        // the migration provisions the inbox/outbox/outbox_message tables
-        // so the bus-side wiring (WalletModule.ConfigureOutbox passed to
-        // AddPamMassTransit in Program.cs) can light up the moment the
-        // shared outbox infrastructure lands.
-        modelBuilder.AddInboxStateEntity();
-        modelBuilder.AddOutboxMessageEntity();
-        modelBuilder.AddOutboxStateEntity();
+        // No outbox entities here — see OperatorsDbContext.OnModelCreating
+        // for the rationale. The MT outbox lives in
+        // PamMessagingDbContext (schema "messaging").
 
         // Brand-scoped global query filter goes here once authenticated
         // wallet endpoints exist (see PlayersDbContext for the same hook

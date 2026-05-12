@@ -10,7 +10,7 @@ help:
 	@echo "Available commands:"
 	@echo "  make up                                       - Start docker-compose dependencies"
 	@echo "  make down                                     - Stop docker-compose"
-	@echo "  make logs SERVICE=postgres                    - Tail compose logs for a service"
+	@echo "  make logs SERVICE=mssql                       - Tail compose logs for a service"
 	@echo "  make ps                                       - List compose services"
 	@echo "  make restore                                  - dotnet restore"
 	@echo "  make build                                    - dotnet build"

@@ -33,7 +33,13 @@ public sealed class PamApiFactory(PamContainersFixture containers)
                 config.AddInMemoryCollection(
                     new Dictionary<string, string?>(StringComparer.Ordinal)
                     {
-                        ["ConnectionStrings:Pam"] = containers.Postgres.GetConnectionString(),
+                        // Testcontainers.MsSql emits a connection string without
+                        // TrustServerCertificate/Encrypt — the SA cert isn't
+                        // signed by a CA the .NET client trusts, so we append
+                        // them to dodge a TLS handshake failure on every test.
+                        ["ConnectionStrings:Pam"] =
+                            containers.Sql.GetConnectionString()
+                            + ";TrustServerCertificate=True;Encrypt=False",
                         ["ConnectionStrings:Redis"] = containers.Redis.GetConnectionString(),
                         ["MessageBroker:Host"] = rabbitUri.Host,
                         ["MessageBroker:Port"] = rabbitUri.Port.ToString(

@@ -15,7 +15,7 @@ mprocs                     # one command; two panes
 
 `mprocs.yaml` runs two procs:
 
-- `services` — `docker compose up` (Postgres, RabbitMQ, Redis, Seq, Grafana LGTM) in foreground
+- `services` — `docker compose up` (SQL Server, RabbitMQ, Redis, Seq, Grafana LGTM) in foreground
 - `api` — `make dev-api` (apply migrations + `dotnet watch`)
 
 Switch panes with `Tab`; quit with `q` or `Ctrl-C`.
@@ -60,7 +60,7 @@ then default to `RequireAuthorization` and individual ones opt out via
 
 | Service | Host port | Notes |
 |---|---|---|
-| Postgres | 5432 | user: `pam`, db: `pam` |
+| SQL Server | 1433 | user: `sa`, password: `Pam_dev_password_123!`, db: `pam`. On Apple Silicon the image runs under Rosetta (`platform: linux/amd64`) — first boot is ~30–60s while it lays down system DBs. |
 | RabbitMQ | 5672 (amqp), 15672 (UI) | user: `pam` |
 | Redis | 6379 | password: `redis_dev_password` |
 | Seq | 5341 (ingest), 8090 (UI) | optional log viewer |

@@ -1,5 +1,5 @@
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
-using Npgsql;
 using Pam.Ingest.Contracts.Transactions.Models;
 using Pam.Ingest.Data;
 using Pam.Ingest.Transactions.Models;
@@ -12,10 +12,15 @@ namespace Pam.Ingest.Transactions.Features.Ingest;
 public sealed class IngestTransactionHandler(IngestDbContext db, IClock clock)
     : ICommandHandler<IngestTransactionCommand, IngestTransactionResult>
 {
-    // Postgres SQLSTATE for unique_violation. We catch this exactly to
-    // distinguish "vendor retried with same reference" (TransactionStatus
-    // .Duplicate, success) from genuine errors.
-    private const string UniqueViolationSqlState = "23505";
+    // SQL Server error numbers for unique-key violations. 2627 is the
+    // generic UNIQUE constraint violation; 2601 is the equivalent for a
+    // UNIQUE index. Both fire on the same INSERT collision pattern; catch
+    // both so the duplicate-vendor-retry path stays correct regardless of
+    // whether the idempotency rule is enforced by a constraint or an
+    // index. (Postgres collapsed both into SQLSTATE 23505; SQL Server
+    // splits them.)
+    private const int UniqueConstraintViolation = 2627;
+    private const int UniqueIndexViolation = 2601;
 
     public async Task<IngestTransactionResult> Handle(
         IngestTransactionCommand cmd,
@@ -80,6 +85,6 @@ public sealed class IngestTransactionHandler(IngestDbContext db, IClock clock)
     }
 
     private static bool IsUniqueViolation(DbUpdateException ex) =>
-        ex.InnerException is PostgresException pg
-        && string.Equals(pg.SqlState, UniqueViolationSqlState, StringComparison.Ordinal);
+        ex.InnerException is SqlException sql
+        && (sql.Number == UniqueConstraintViolation || sql.Number == UniqueIndexViolation);
 }

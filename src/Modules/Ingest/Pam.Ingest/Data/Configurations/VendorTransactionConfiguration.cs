@@ -43,7 +43,7 @@ public sealed class VendorTransactionConfiguration : IEntityTypeConfiguration<Ve
 
         // The idempotency guarantee. A vendor retrying with the same
         // (vendor_id, vendor_reference) trips this unique index; the
-        // handler catches PostgresErrorCodes.UniqueViolation and surfaces
+        // handler catches SQL Server error 2627/2601 (unique-key violation) and surfaces
         // TransactionStatus.Duplicate.
         builder
             .HasIndex(t => new { t.VendorId, t.VendorReference })

@@ -18,7 +18,7 @@ For the narrative behind the test gate landing, see
 | Players unit | `tests/Pam.Players.UnitTests/` | 1 | <100ms | `Player.Create` placeholder (scaffold) |
 | Wallet unit | `tests/Pam.Wallet.UnitTests/` | 1 | <100ms | `Account.Open` placeholder (scaffold) |
 | Architecture | `tests/Pam.ArchitectureTests/` | 8 | ~250ms | NetArchTest rules: module boundary, domain/integration event shape, aggregate inheritance |
-| Integration | `tests/Pam.IntegrationTests/` | 3 | ~3s (incl. ~10–20s first-run container boot) | Health probes + auth fence over real Postgres/RabbitMQ/Redis via Testcontainers |
+| Integration | `tests/Pam.IntegrationTests/` | 3 | ~3s (incl. ~10–20s first-run container boot) | Health probes + auth fence over real SQL Server/RabbitMQ/Redis via Testcontainers |
 
 **Total: 83 tests.** Architecture + unit suites finish in well under
 2 seconds; integration is dominated by the one-time container boot.
@@ -42,7 +42,7 @@ runnable on any machine without docker.
 - `PermissionResolver` against the EF Core in-memory provider — the
   only place we use in-memory EF, because the resolver's job is to
   walk a join table, and that's relational shape that benefits from a
-  real querying provider even if it isn't Postgres.
+  real querying provider even if it isn't SQL Server.
 
 **Out of scope**:
 - Anything that requires `DbContext.SaveChangesAsync` to commit to a
@@ -103,7 +103,7 @@ broker round-trips, real Identity flow, real HTTP pipeline ordering.
 
 **The harness**:
 
-- `PamContainersFixture : IAsyncLifetime` boots Postgres 17 + RabbitMQ
+- `PamContainersFixture : IAsyncLifetime` boots SQL Server 2022 + RabbitMQ
   4 + Redis 7 via Testcontainers. Shared as an `ICollectionFixture`
   via `PamContainersCollection`, so the ~10–20s boot cost is paid
   once per test session, not per test class.
@@ -124,7 +124,7 @@ broker round-trips, real Identity flow, real HTTP pipeline ordering.
 | Test | Verifies |
 |---|---|
 | `LiveProbe_Returns_Healthy` | `GET /health/live` returns 200 — host is up, route is mapped |
-| `ReadyProbe_Returns_Healthy_When_Dependencies_Up` | `GET /health/ready` returns 200 — Postgres + Redis + Rabbit all reachable. Uses `HealthCheckService` directly so failures report **which** dependency broke, not just "Unhealthy" |
+| `ReadyProbe_Returns_Healthy_When_Dependencies_Up` | `GET /health/ready` returns 200 — SQL Server + Redis + Rabbit all reachable. Uses `HealthCheckService` directly so failures report **which** dependency broke, not just "Unhealthy" |
 | `CreateBrand_Requires_Authentication` | Anonymous `POST /v1/operators/brands` → 401. The fallback authorization policy is intact |
 
 **Why these three, and not more**:
@@ -148,7 +148,7 @@ broker round-trips, real Identity flow, real HTTP pipeline ordering.
   baseline test needs realistic data and isn't useful before Wallet
   has real domain code.
 - Migration rollback tests. EF migrations are forward-only; rollback
-  is a manual process that runs against a real Postgres backup.
+  is a manual process that runs against a real SQL Server backup.
 - Multi-replica integration test (boot two `PamApiFactory` instances
   against the same containers, verify cookie/token cross-replica
   validation). This is the natural follow-up to the pre-replica-safety
@@ -192,7 +192,7 @@ The integration suite requires Docker (or Podman with a Docker
 socket) running. Testcontainers will fail with a clear "Docker
 endpoint unreachable" error if it isn't — no other dev
 infrastructure is required (Testcontainers manages its own
-Postgres/Rabbit/Redis containers, separate from the long-lived ones
+SQL Server/Rabbit/Redis containers, separate from the long-lived ones
 in `docker-compose.yml`).
 
 ### A specific suite

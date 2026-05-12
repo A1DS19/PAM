@@ -21,12 +21,12 @@ public static class AuditModule
         services.AddDbContext<AuditDbContext>(
             (_, options) =>
             {
-                options.UseNpgsql(
+                options.UseSqlServer(
                     connectionString,
-                    npg =>
+                    sql =>
                     {
-                        npg.MigrationsHistoryTable("__EFMigrationsHistory", AuditDbContext.Schema);
-                        npg.MigrationsAssembly(typeof(AuditDbContext).Assembly.FullName);
+                        sql.MigrationsHistoryTable("__EFMigrationsHistory", AuditDbContext.Schema);
+                        sql.MigrationsAssembly(typeof(AuditDbContext).Assembly.FullName);
                     }
                 );
                 options.UseSnakeCaseNamingConvention();
@@ -37,7 +37,7 @@ public static class AuditModule
 
         services
             .AddHealthChecks()
-            .AddNpgSql(connectionString, name: "audit-db", tags: ["ready", "module:audit"]);
+            .AddSqlServer(connectionString, name: "audit-db", tags: ["ready", "module:audit"]);
 
         return services;
     }

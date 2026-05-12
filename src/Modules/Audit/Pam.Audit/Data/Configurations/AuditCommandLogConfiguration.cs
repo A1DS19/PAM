@@ -20,10 +20,13 @@ public sealed class AuditCommandLogConfiguration : IEntityTypeConfiguration<Audi
 
         builder.Property(x => x.RequestType).IsRequired().HasMaxLength(256);
 
-        // jsonb keeps the payload queryable from psql/Grafana; size is
-        // bounded only by Postgres' field cap, and any SELECT can index
-        // into specific keys with `payload_json -> 'field'`.
-        builder.Property(x => x.PayloadJson).IsRequired().HasColumnType("jsonb");
+        // nvarchar(max) stores the redacted JSON payload. SQL Server
+        // 2016+ supports OPENJSON / JSON_VALUE / JSON_QUERY against
+        // arbitrary nvarchar columns, so we keep the same "queryable
+        // from sqlcmd / Grafana" property as Postgres jsonb without
+        // the type's storage compaction. Storage cost is the
+        // worth-it trade for staying within the standard provider.
+        builder.Property(x => x.PayloadJson).IsRequired().HasColumnType("nvarchar(max)");
 
         builder.Property(x => x.StartedAt).IsRequired();
         builder.Property(x => x.CompletedAt).IsRequired();

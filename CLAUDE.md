@@ -174,14 +174,16 @@ work around either.
 GBS uses `FLOAT` cents — that's one of the explicit bugs PAM is fixing.
 Don't carry it forward.
 
-### Time is `DateTimeOffset`, stored as `timestamptz`
+### Time is `DateTimeOffset`, stored as `datetimeoffset`
 
 - Use `IClock.UtcNow` in any code path you'd want testable. Never call
   `DateTime.Now`, `DateTime.UtcNow`, or `DateTimeOffset.Now` — they're
   banned via `BannedSymbols.txt`.
 - `DateTimeOffset.UtcNow` is allowed only in places where DI is
   impractical (e.g. record init defaults).
-- Every timestamp column is `timestamptz`. Never naive `timestamp`.
+- Every timestamp column is `datetimeoffset` (SQL Server's
+  timezone-aware type — equivalent to Postgres `timestamptz` from the
+  pre-ADR-#27 era). Never naive `datetime`/`datetime2` without offset.
 
 ---
 
@@ -195,7 +197,7 @@ Don't carry it forward.
   them to RFC-7807 `ProblemDetails` with `extensions.code = <stable code>`.
 - For endpoints that vendors / clients retry: use a database UNIQUE
   constraint as the idempotency anchor. Catch `DbUpdateException` for
-  Postgres SQLSTATE `23505` and surface a `Duplicate` outcome. See
+  SQL Server error number 2627 or 2601 (unique-key violations) and surface a `Duplicate` outcome. See
   `Pam.Ingest/Transactions/Features/Ingest/IngestTransactionHandler.cs`
   for the canonical shape.
 
@@ -203,22 +205,29 @@ Don't carry it forward.
 
 ## Outbox and events
 
-- Modules that publish integration events register their DbContext for
-  outbox via a public `static void ConfigureOutbox(IBusRegistrationConfigurator)`
-  method on the module class. `Program.cs` composes those delegates in
-  the `AddPamMassTransit` call.
-- Only `OperatorsModule.ConfigureOutbox` calls `UseBusOutbox()`. That
-  call installs the publish-intercepting singleton; calling it from
-  multiple modules trips a `NullReferenceException` in the delivery
-  service. Other modules call `AddEntityFrameworkOutbox<T>` for their
-  own DbContext only.
-- Domain handlers run **pre-save** (inside the `SaveChanges`
-  transaction). A throwing handler rolls back the whole save. Don't put
-  best-effort side effects (logging, metrics, fire-and-forget calls) in
-  a domain handler — put them in an integration-event consumer.
+- **One shared outbox DbContext, period.** `PamMessagingDbContext`
+  (schema `messaging`, in `Pam.Shared.Messaging`) owns the MassTransit
+  `inbox_state` / `outbox_state` / `outbox_message` tables. The single
+  `UseBusOutbox()` call in `AddPamMassTransit` binds it as the bus-wide
+  outbox target. Module DbContexts do NOT carry outbox entities and
+  modules do NOT call `AddEntityFrameworkOutbox` themselves. Why this
+  shape: MT 8.5.x cannot multiplex the outbox across DbContexts on a
+  single bus — see ADR #26 for the citation + the atomicity trade-off
+  we currently accept. Don't try to add `ConfigureOutbox` to a new
+  module; the bus-wide registration already covers it.
+- Adding a new publisher = define a domain event aggregate-side +
+  bridge handler that calls `IPublishEndpoint.Publish` with an
+  integration event. `OutboxFlushBehavior` (innermost MediatR
+  behavior) commits the outbox row at command-tail.
+- Domain handlers run **pre-save** (inside the business DbContext's
+  `SaveChanges` transaction). A throwing handler rolls back the
+  business write. Don't put best-effort side effects (logging,
+  metrics, fire-and-forget calls) in a domain handler — put them in
+  an integration-event consumer.
 
 See `docs/ARCHITECTURE.md` "Outbox + pre-save domain-event dispatch"
-for the full trade-off discussion.
+for the full trade-off discussion and `docs/DECISIONS.md` ADR #26 for
+the multi-module-outbox topology rationale.
 
 ---
 
@@ -240,7 +249,7 @@ PII), add the field name to `SensitiveJsonRedactor`'s allowlist.
 
 Always `Guid.CreateVersion7()` via the `PamIds.New()` helper from
 `Pam.Shared.Contracts.Identity`. UUIDv7 is time-ordered so it indexes
-efficiently as a primary key in Postgres. Don't use `Guid.NewGuid()`
+efficiently as a primary key in SQL Server. Don't use `Guid.NewGuid()`
 (random v4) for primary keys; reserve it for nonce-style use.
 
 ---

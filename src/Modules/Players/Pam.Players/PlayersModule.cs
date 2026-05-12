@@ -33,12 +33,12 @@ public static class PlayersModule
                     sp.GetRequiredService<AuditableSaveChangesInterceptor>(),
                     sp.GetRequiredService<DispatchDomainEventsInterceptor>()
                 );
-                options.UseNpgsql(
+                options.UseSqlServer(
                     connectionString,
-                    npg =>
+                    sql =>
                     {
-                        npg.MigrationsHistoryTable("__EFMigrationsHistory", PlayersDbContext.Schema);
-                        npg.MigrationsAssembly(typeof(PlayersDbContext).Assembly.FullName);
+                        sql.MigrationsHistoryTable("__EFMigrationsHistory", PlayersDbContext.Schema);
+                        sql.MigrationsAssembly(typeof(PlayersDbContext).Assembly.FullName);
                     }
                 );
                 options.UseSnakeCaseNamingConvention();
@@ -47,7 +47,7 @@ public static class PlayersModule
 
         services
             .AddHealthChecks()
-            .AddNpgSql(connectionString, name: "players-db", tags: ["ready", "module:players"]);
+            .AddSqlServer(connectionString, name: "players-db", tags: ["ready", "module:players"]);
 
         return services;
     }

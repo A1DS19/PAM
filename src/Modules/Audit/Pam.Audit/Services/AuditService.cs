@@ -19,7 +19,7 @@ public sealed class AuditService(AuditDbContext db, ILogger<AuditService> logger
         {
             // Audit failure must never fail the command — matches the
             // CachingBehavior pattern. Losing the occasional audit row to
-            // a Postgres blip is the lesser evil compared to making the
+            // a SQL Server blip is the lesser evil compared to making the
             // audit DB a single point of failure for /v1/* writes.
             logger.LogWarning(
                 ex,

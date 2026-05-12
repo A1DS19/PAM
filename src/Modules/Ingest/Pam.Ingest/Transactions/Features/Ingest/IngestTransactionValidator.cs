@@ -10,8 +10,15 @@ public sealed class IngestTransactionValidator : AbstractValidator<IngestTransac
 
         RuleFor(x => x.VendorReference).NotEmpty().MaximumLength(400);
 
-        RuleFor(x => x.BrandId).NotEmpty();
-        RuleFor(x => x.PlayerId).NotEmpty();
+        // BrandId / PlayerId intentionally NOT validated as non-empty.
+        // Phase-A vendor adapters (e.g. TwentyOneGCustomerTransactionService)
+        // submit `Guid.Empty` because the Pam.Players module + brand
+        // resolution don't exist yet. The row persists with empty Guids
+        // and is enriched later when IPlayerLookup ships.
+        //
+        // Phase C+ follow-up: switch these to nullable Guid? columns OR
+        // re-introduce NotEmpty checks and remove the Guid.Empty pathway
+        // from the SOAP services.
 
         // Zero-amount transactions are nonsense; vendor MUST send a
         // signed value (Risk negative, Win positive). The handler also

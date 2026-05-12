@@ -10,13 +10,13 @@ public sealed class PlayersDbContextDesignTimeFactory
     {
         var connection =
             Environment.GetEnvironmentVariable("PAM_DESIGN_CONNECTION")
-            ?? "Host=localhost;Port=5432;Database=pam;Username=pam;Password=pam_dev_password";
+            ?? "Server=localhost,1433;Database=pam;User Id=sa;Password=Pam_dev_password_123!;TrustServerCertificate=True;Encrypt=False";
 
         var options = new DbContextOptionsBuilder<PlayersDbContext>()
-            .UseNpgsql(
+            .UseSqlServer(
                 connection,
-                npg =>
-                    npg.MigrationsHistoryTable("__EFMigrationsHistory", PlayersDbContext.Schema)
+                sql =>
+                    sql.MigrationsHistoryTable("__EFMigrationsHistory", PlayersDbContext.Schema)
             )
             .UseSnakeCaseNamingConvention()
             .Options;

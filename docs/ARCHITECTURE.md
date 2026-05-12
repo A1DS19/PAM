@@ -12,7 +12,7 @@ its own `DbContext`, schema (`<module>.*`), aggregates, and feature folders.
 
 - A module can be extracted to its own service when scale or team-org demands
   it. The module boundary (assembly, schema, contracts) makes that mechanical.
-- Until then, we get a single deployable, one Postgres backup, one connection
+- Until then, we get a single deployable, one SQL Server backup, one connection
   pool, and zero distributed-system tax.
 
 **Hard rule**: a module never reads another module's data or types directly.
@@ -103,7 +103,7 @@ PAM owns its identity stack. There is no external IDP process.
   calls.
 - **ASP.NET Core Identity** owns user storage, password hashing, lockout,
   email confirmation, MFA. Lives in the `Pam.Identity` module.
-- **Single host, single Postgres database.** Identity tables and OpenIddict
+- **Single host, single SQL Server database.** Identity tables and OpenIddict
   tables cohabit `IdentityDbContext` in schema `identity`.
 - **Roles + Permissions.** Identity provides `IdentityRole<Guid>` for coarse
   buckets (Owner, Manager, Operator, Accountant). On top of that, a
@@ -133,7 +133,7 @@ and Asia expansions all share this PAM.
   `BrandId` foreign reference.
 - Brand uniqueness is enforced at the DB (`UNIQUE (slug)`) and via an
   in-handler precheck so we can return a typed `AlreadyExistsException` (→
-  409) instead of a Postgres unique-violation generic 500.
+  409) instead of a SQL Server unique-violation generic 500.
 - Brand resolution at runtime: anonymous registration takes brand context
   from a request header (final shape TBD when Players returns); back-office
   identities carry `brand_id` as a JWT claim issued by the embedded IDP.
@@ -185,7 +185,7 @@ produce.
 
 ## Time
 
-`DateTimeOffset` everywhere, stored as `timestamptz`. `IClock` interface (with
+`DateTimeOffset` everywhere, stored as `datetimeoffset`. `IClock` interface (with
 `SystemClock` impl) is injected wherever a timestamp matters, so handlers and
 domain code are testable.
 
@@ -441,37 +441,73 @@ production deploy lands.
 ## Outbox + pre-save domain-event dispatch
 
 Domain events dispatch **pre-save**: `DispatchDomainEventsInterceptor`
-overrides `SavingChangesAsync` so handlers run inside the same DB
-transaction as the `SaveChanges` that triggered them. The dispatch loop
-is bounded at 8 generations to catch handlers that recursively raise
+overrides `SavingChangesAsync` so handlers run inside the business
+`SaveChanges` of the module that triggered them. The dispatch loop is
+bounded at 8 generations to catch handlers that recursively raise
 events on tracked aggregates.
 
-MassTransit's EF Core outbox is wired on `OperatorsDbContext` (and any
-future publishing module's DbContext). `BrandCreatedDomainHandler` calls
-`IPublishEndpoint.Publish(BrandCreatedIntegrationEvent)`; the outbox
-intercepts that publish and writes the message to `outbox_message` in
-the same transaction. A background `EntityFrameworkOutboxDeliveryService`
-polls the table and forwards to RabbitMQ. DB write + queued integration
-event commit atomically; a crash between commit and delivery is harmless
-because the delivery service retries until the row is marked sent.
+**Outbox topology (single shared messaging schema).** MassTransit 8.5.x
+can attach the bus outbox to one DbContext only — `IScopedBusContextProvider<IBus>`
+is keyed on the bus type, so the multi-DbContext outbox available in
+MT 9.1 isn't on the table while PAM holds the Apache-2.0 line. PAM
+uses one `PamMessagingDbContext` (schema `messaging`, in
+`Pam.Shared.Messaging`) that owns `inbox_state` / `outbox_state` /
+`outbox_message`. `AddPamMassTransit` calls `UseBusOutbox()` on this
+one context. Module DbContexts (Operators, Ingest, Wallet, ...) do NOT
+carry outbox entities and modules do NOT register their own outboxes.
+See DECISIONS.md ADR #26 for the full rationale and the citation to
+the MT author's endorsement of this pattern.
 
-Trade-off you're buying into:
+The publish flow:
 
-- Handlers see **pre-commit** state. The aggregate row isn't visible to
-  other connections yet, so a handler that queries the DB for
-  freshly-written data will miss it. Workaround: pass the data through
-  the event payload.
-- A throwing handler **rolls back the whole `SaveChanges`**. That's the
-  point — atomic by design. Don't put best-effort side effects (logging,
-  metrics) in a domain handler; put them in an integration-event consumer.
+1. Command handler runs, writes to its module's business DbContext,
+   calls `SaveChangesAsync`. `DispatchDomainEventsInterceptor` fires
+   pre-save, dispatches domain events via MediatR.
+2. Bridge handler (e.g. `BrandCreatedDomainHandler`,
+   `TransactionIngestedDomainHandler`) calls
+   `IPublishEndpoint.Publish(<integration event>)`.
+3. The bus-wide outbox intercepts the publish and writes an
+   `OutboxMessage` row into `PamMessagingDbContext`'s change tracker.
+4. The business `SaveChangesAsync` completes — only business rows
+   committed; outbox rows still in-memory in the messaging change
+   tracker.
+5. `OutboxFlushBehavior` (innermost MediatR pipeline behavior) calls
+   `messaging.SaveChangesAsync` at the command tail. Outbox rows
+   commit to `messaging.outbox_message`.
+6. `BusOutboxNotification` immediately wakes
+   `BusOutboxDeliveryService<PamMessagingDbContext>`; the delivery
+   service publishes to RabbitMQ and removes the delivered rows.
 
-**Per-module outbox wiring.** Each publishing module exposes a public
-`ConfigureOutbox(IBusRegistrationConfigurator)` delegate (see
-`OperatorsModule`); `Program.cs` passes those delegates to
-`AddPamMassTransit`. Adding a new publisher = three lines: package
-reference, model entities (`AddInboxStateEntity` / `AddOutboxMessageEntity` /
-`AddOutboxStateEntity`), `ConfigureOutbox` delegate.
+Trade-offs you're buying into:
+
+- Handlers see **pre-commit** state of the business DbContext. The
+  aggregate row isn't visible to other connections yet, so a handler
+  that queries the DB for freshly-written data will miss it.
+  Workaround: pass the data through the event payload.
+- A throwing handler **rolls back the whole business `SaveChanges`**.
+  That's the point — atomic by design. Don't put best-effort side
+  effects (logging, metrics) in a domain handler; put them in an
+  integration-event consumer.
+- **Atomicity caveat (currently accepted).** The business `SaveChanges`
+  and the outbox `SaveChanges` run in separate transactions. A crash
+  between (4) and (5) leaves the business row committed but the
+  integration event undelivered. The window is bounded by request-tail
+  time (~ms). True cross-context atomicity (shared `NpgsqlConnection`
+  + shared `IDbContextTransaction`) and a reconciliation job are
+  follow-ups documented in ROADMAP.md and DECISIONS.md ADR #26.
+- The `messaging.outbox_message` table is **empty in steady state**
+  — that's correct outbox semantics: the delivery service removes
+  delivered rows. Use the API log's `Flushed N outbox row(s)` debug
+  line or the RabbitMQ exchange list to verify activity, not a SELECT
+  against the table.
+
+**Adding a new publisher** = define a domain event, write a bridge
+handler that calls `IPublishEndpoint.Publish` with an integration
+event record. No outbox plumbing, no `ConfigureOutbox` method, no
+package references — the bus-wide outbox in `Pam.Shared.Messaging`
+already covers it.
 
 **For Wallet** the outbox is non-negotiable from day one of that module —
 the wallet's `LedgerEntryPosted` integration event MUST be transactional
-with the ledger row. This pattern is the substrate that makes it possible.
+with the ledger row. The shared-messaging-DbContext pattern is the
+substrate that makes it possible without per-module wiring.

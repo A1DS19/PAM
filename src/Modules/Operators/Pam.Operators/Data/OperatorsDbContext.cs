@@ -1,4 +1,3 @@
-using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Pam.Operators.Brands.Models;
 
@@ -16,14 +15,12 @@ public sealed class OperatorsDbContext(DbContextOptions<OperatorsDbContext> opti
         modelBuilder.HasDefaultSchema(Schema);
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(OperatorsDbContext).Assembly);
 
-        // MassTransit outbox tables — integration-event publishes from inside
-        // a SaveChanges scope (BrandCreatedDomainHandler etc.) write to
-        // OutboxMessage in the same transaction. A delivery service polls
-        // and forwards to RabbitMQ. InboxState exists for the symmetric
-        // case (deduplicating inbound consumes) and is harmless even if
-        // this module never consumes events.
-        modelBuilder.AddInboxStateEntity();
-        modelBuilder.AddOutboxMessageEntity();
-        modelBuilder.AddOutboxStateEntity();
+        // No outbox entities here. PAM hosts MassTransit's inbox/outbox
+        // tables in a single shared messaging schema owned by
+        // PamMessagingDbContext (Pam.Shared.Messaging). Bridge handlers
+        // call IPublishEndpoint.Publish as before — the bus-wide
+        // UseBusOutbox in AddPamMassTransit routes the OutboxMessage row
+        // into the messaging context, which OutboxFlushBehavior commits
+        // at the tail of each command pipeline.
     }
 }

@@ -60,17 +60,12 @@ builder.Services.AddPamMediatR(moduleAssemblies);
 // houses the integration-event subscribers (welcome emails, transactional
 // receipts, ...). Pam.Identity/Pam.Operators don't consume events yet.
 //
-// The configureBus delegate composes per-module outbox setups. Each
-// publishing module exposes ConfigureOutbox(IBusRegistrationConfigurator);
-// add a call here when a new module starts publishing integration events.
+// Outbox lives on PamMessagingDbContext (schema "messaging"), owned by
+// Pam.Shared.Messaging. Single .UseBusOutbox() call inside this method —
+// no per-module ConfigureOutbox hooks. See docs/DECISIONS.md ADR on the
+// outbox topology.
 builder.Services.AddPamMassTransit(
     builder.Configuration,
-    bus =>
-    {
-        OperatorsModule.ConfigureOutbox(bus);
-        WalletModule.ConfigureOutbox(bus);
-        IngestModule.ConfigureOutbox(bus);
-    },
     typeof(NotificationsModule).Assembly
 );
 
@@ -322,7 +317,7 @@ builder
         t.AddAspNetCoreInstrumentation()
             .AddHttpClientInstrumentation()
             .AddEntityFrameworkCoreInstrumentation()
-            .AddSource("Npgsql")
+            
             .AddSource("MassTransit")
             .AddSource("Pam.*")
             .AddOtlpExporter()
@@ -355,6 +350,14 @@ app.UseSerilogRequestLogging();
 app.UseExceptionHandler();
 app.UseCors();
 app.UseRateLimiter();
+
+// Vendor SOAP endpoints — SoapCore middleware short-circuits the
+// pipeline on a path match. Mounted BEFORE UseAuthentication so vendor
+// traffic skips the bearer-auth fallback policy; each vendor adapter
+// authenticates via the SOAP body (systemID + systemPassword), not a
+// PAM JWT.
+app.UseIngestSoapEndpoints();
+
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapCarter();
@@ -389,6 +392,14 @@ await app.Services.UsePlayersModuleAsync();
 await app.Services.UseWalletModuleAsync();
 await app.Services.UseAuditModuleAsync();
 await app.Services.UseIngestModuleAsync();
+
+// Shared messaging schema (MassTransit inbox/outbox tables). Applies the
+// migration that creates the "messaging" schema; module migrations that
+// previously held per-module outbox tables drop those in a paired
+// RemoveOutboxTables migration. Order doesn't matter — the schemas are
+// independent — but kept last so failures here surface after the modules
+// have logged their own migration success.
+await app.Services.UsePamMessagingAsync();
 
 await app.RunAsync();
 

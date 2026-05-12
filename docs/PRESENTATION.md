@@ -23,14 +23,14 @@ Jose Padilla · May 12 2026
 ## Slide 2 — The proposal in one paragraph
 
 > A **modular monolith** today, **microservice-ready** when scale or
-> team-org demands it. One deploy, one Postgres, zero distributed-system
+> team-org demands it. One deploy, one SQL Server, zero distributed-system
 > tax — but with the module boundaries already drawn so any module can
 > be extracted later with a mechanical refactor, not a rewrite.
 
 Three structural rules, repeated everywhere:
 
 1. **Schema-per-module.** Each module owns its tables under its own
-   Postgres schema (`identity.*`, `operators.*`, `audit.*`, …). No
+   SQL Server schema (`identity.*`, `operators.*`, `audit.*`, …). No
    cross-schema joins.
 2. **`*.Contracts` is the only seam.** A module can be referenced from
    another module *only* via its `Contracts` assembly. Direct project
@@ -167,28 +167,40 @@ feature." It runs:
 The MassTransit EF Core outbox is wired on every publishing module's
 DbContext. Domain handlers run **pre-save**, inside the same DB
 transaction as `SaveChanges`. `IPublishEndpoint.Publish` writes to
-`outbox_message` atomically with the aggregate write. A background
-delivery service forwards to RabbitMQ.
+`messaging.outbox_message` (queued during the business transaction,
+committed at the tail of the command pipeline). A background delivery
+service forwards to RabbitMQ. See DECISIONS.md ADR #26 for why we own
+one shared messaging schema instead of per-module outbox tables.
 
 ```
-SaveChanges transaction
-  ├── INSERT INTO operators.brands       ← aggregate row
-  ├── INSERT INTO operators.outbox_message ← integration event
-  └── COMMIT                              ← atomic
+Business SaveChanges transaction
+  ├── INSERT INTO operators.brands         ← aggregate row
+  └── COMMIT                                ← business write persisted
+
+                       │  (publish queued into PamMessagingDbContext
+                       │   change tracker by MT's bus-wide outbox)
+                       ▼
+OutboxFlushBehavior — tail of command pipeline
+  ├── INSERT INTO messaging.outbox_message ← integration event
+  └── COMMIT                                ← outbox row persisted
                        │
-                       ▼ async, retried
+                       ▼ BusOutboxNotification (immediate, async)
               EntityFrameworkOutboxDeliveryService
                        │
                        ▼
-                  RabbitMQ
+                  RabbitMQ exchange
 ```
 
-> What this buys us: a crash between the DB commit and the broker
-> publish can never lose an event. The row in `outbox_message` is the
-> source of truth; if the broker is down, the delivery service retries
-> until it succeeds. **This is non-negotiable for Wallet** — a missed
-> "balance changed" event corrupts financial state. Outbox is already
-> wired on `Pam.Wallet` from day one.
+> What this buys us: once the outbox row is committed, a crash before
+> broker publish can never lose the event — the row in
+> `messaging.outbox_message` is the source of truth and the delivery
+> service retries until the broker accepts it. A sub-millisecond
+> under-deliver window between business and outbox commits is the
+> remaining gap, covered by ROADMAP item #1 (shared-connection-shared-
+> transaction work) and a reconciliation backstop. **Non-negotiable
+> for Wallet** — a missed "balance changed" event corrupts financial
+> state. The shared messaging schema covers Wallet from its first PR
+> automatically.
 
 ---
 
@@ -202,7 +214,7 @@ behind a load balancer:
 | Cookies issued by replica A validate on replica B | DP master keyring persisted to `identity.data_protection_keys` |
 | OpenIddict signing/encryption keys shared | PFX files mounted into every replica, rotated by swapping the file |
 | Rate-limit counts are global, not per-instance | Redis-backed sliding/fixed window limiters (RedisRateLimiting package) |
-| Concurrent boot doesn't race on UNIQUE constraints | `pg_advisory_xact_lock(100_001)` wraps the seeder |
+| Concurrent boot doesn't race on UNIQUE constraints | `sp_getapplock(100_001)` wraps the seeder |
 | Async flows correlate across services | `CorrelationIdMiddleware` propagates through Activity baggage → MassTransit → outbox |
 
 > All five are shipped. The system can run with two replicas behind a
@@ -254,13 +266,13 @@ Index-served on `(actor_id, started_at DESC)`.
 | Players unit | 1 | scaffold |
 | Wallet unit | 1 | scaffold |
 | **Architecture** | 8 | module boundary + event shapes (NetArchTest) |
-| **Integration** | 3 | real Postgres + RabbitMQ + Redis (Testcontainers) |
+| **Integration** | 3 | real SQL Server + RabbitMQ + Redis (Testcontainers) |
 
 > Architecture tests are the interesting ones. They enforce in CI
 > that `Pam.Operators` can't reference `Pam.Identity` directly — only
 > `Pam.Identity.Contracts`. The boundary rule from the architecture
 > doc is automated; no one can accidentally break it. Integration
-> tests boot the actual host against real Postgres/Rabbit/Redis
+> tests boot the actual host against real SQL Server/Rabbit/Redis
 > containers via Testcontainers, so we catch DI graph issues and
 > migration problems before they hit dev.
 
@@ -320,7 +332,7 @@ first, falls through to the handler on miss. Commands carrying
 
 We'll spend 10–12 minutes in the terminal + browser:
 
-1. `make up` — bring up Postgres + RabbitMQ + Redis + Mailpit + LGTM
+1. `make up` — bring up SQL Server + RabbitMQ + Redis + Mailpit + LGTM
 2. `make dev-api` — start the API (no other services need to start; LGTM is for show)
 3. **Authentication**: `POST /v1/identity/login` → cookie + access token via OIDC PKCE
 4. **MFA**: enroll TOTP → verify → login flow now requires both factors
@@ -349,7 +361,7 @@ What PAM **doesn't** do yet, with the trigger to land each:
 | `Pam.Affiliates` agent system | not started | CS Part 2 |
 | Sync jobs to GBS player table (DGS-pattern) | not designed | CS Part 1 / CS Part 2 cutover |
 | `gbs-db` strangler-fig migration plan | not written | needed before any phase routes traffic away from GBS |
-| Postgres-vs-SQL-Server justification (CTO doc asked) | not written | this week |
+| SQL Server-vs-SQL-Server justification (CTO doc asked) | not written | this week |
 | Brand-scoped EF global query filter | placeholders in DbContexts | with first authenticated Player endpoint |
 | Auth-aware integration tests | harness ready | next test PR |
 
@@ -405,7 +417,7 @@ not a foundation-and-then-features one.
 |---|---|---|
 | **Month 1** (June) | `Pam.Ingest` POC — one provider type (casino), webhook ingest, normalized `Transaction` row, forward to GBS, emit integration event | Proves CS Part 1 end-to-end on real data |
 | | `MIGRATION.md` design doc | Locks the strangler-fig story before any cutover begins |
-| | Architecture ADRs: Postgres-vs-SQLServer, .NET-vs-{Go,Rust,JS}, RabbitMQ-vs-Kafka | Answers the CTO doc's open questions |
+| | Architecture ADRs: SQL Server-vs-SQLServer, .NET-vs-{Go,Rust,JS}, RabbitMQ-vs-Kafka | Answers the CTO doc's open questions |
 | **Month 2** (July) | `Pam.Ingest` extended to lotto + 3rd-party SB + horses + cashier | Closes Roger's CS Part 1 spec |
 | | `Pam.Players` real domain (registration with agent/affiliate, search, transaction history) | CS Part 2 |
 | | Sync job: PAM → GBS player table (DGS-pattern) | Keeps GBS functioning during migration |
@@ -494,14 +506,14 @@ src/
 tests/
   Pam.<X>.UnitTests/        per-module aggregate + validator tests
   Pam.ArchitectureTests/    NetArchTest module-boundary rules
-  Pam.IntegrationTests/     Testcontainers — real Postgres/RabbitMQ/Redis
+  Pam.IntegrationTests/     Testcontainers — real SQL Server/RabbitMQ/Redis
 ```
 
 ## Appendix B — Likely questions
 
 > Anticipate these. Have a one-liner for each ready.
 
-**"Why Postgres and not SQL Server like GBS?"**
+**"Why SQL Server and not SQL Server like GBS?"**
 PR pinned in ROADMAP; the short answer is JSONB, advisory locks, snake_case
 idioms, lower license cost, no behavior we lose vs SQL Server. The GBS
 migration is a one-time cost we'd pay either way to clean 357 tables +

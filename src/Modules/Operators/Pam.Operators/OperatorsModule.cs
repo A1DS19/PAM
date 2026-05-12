@@ -1,4 +1,3 @@
-using MassTransit;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -10,42 +9,13 @@ namespace Pam.Operators;
 
 public static class OperatorsModule
 {
-    // Outbox config for the bus — passed to AddPamMassTransit from
-    // Program.cs. Lives here so the module owns the choice of polling
-    // interval, delivery batch size, etc. as those tune over time.
-    //
-    // This module owns the single .UseBusOutbox() call across the whole
-    // bus. UseBusOutbox installs the publish-intercepting filter as a
-    // singleton; calling it from more than one module configurator
-    // replaces the singleton and trips NullReferenceException in the
-    // BusOutboxDeliveryService on every poll. Other modules
-    // (WalletModule.ConfigureOutbox, future publishers) register their
-    // AddEntityFrameworkOutbox<T> per-DbContext but omit UseBusOutbox.
-    // The filter this call installs intercepts publishes from ANY of
-    // those DbContexts.
-    public static void ConfigureOutbox(IBusRegistrationConfigurator bus)
-    {
-        bus.AddEntityFrameworkOutbox<OperatorsDbContext>(o =>
-        {
-            o.UsePostgres();
-
-            // UseBusOutbox enables transactional publish: IPublishEndpoint
-            // calls from a SaveChanges scope write to OutboxMessage in the
-            // same transaction instead of going straight to the broker.
-            // See note above — this is the single call across the bus.
-            o.UseBusOutbox();
-
-            // QueryDelay is the IDLE poll cadence — when there's nothing
-            // to deliver. Active sends are woken immediately by
-            // BusOutboxNotification, so this only sets the upper bound on
-            // post-restart delivery latency for messages left in the
-            // outbox by a previous process. 60s keeps the dev log quiet
-            // and the DB workload negligible; tune down for production
-            // restart-sensitivity.
-            o.QueryDelay = TimeSpan.FromSeconds(60);
-            o.DuplicateDetectionWindow = TimeSpan.FromMinutes(30);
-        });
-    }
+    // No ConfigureOutbox here. The bus-wide outbox lives on
+    // PamMessagingDbContext (Pam.Shared.Messaging), wired once in
+    // AddPamMassTransit. BrandCreatedDomainHandler keeps calling
+    // IPublishEndpoint.Publish — the publish is intercepted by the
+    // bus-wide filter and the OutboxMessage row lands in the messaging
+    // context, flushed at the tail of the command pipeline by
+    // OutboxFlushBehavior.
 
     public static IServiceCollection AddOperatorsModule(
         this IServiceCollection services,
@@ -66,15 +36,15 @@ public static class OperatorsModule
                     sp.GetRequiredService<AuditableSaveChangesInterceptor>(),
                     sp.GetRequiredService<DispatchDomainEventsInterceptor>()
                 );
-                options.UseNpgsql(
+                options.UseSqlServer(
                     connectionString,
-                    npg =>
+                    sql =>
                     {
-                        npg.MigrationsHistoryTable(
+                        sql.MigrationsHistoryTable(
                             "__EFMigrationsHistory",
                             OperatorsDbContext.Schema
                         );
-                        npg.MigrationsAssembly(typeof(OperatorsDbContext).Assembly.FullName);
+                        sql.MigrationsAssembly(typeof(OperatorsDbContext).Assembly.FullName);
                     }
                 );
                 options.UseSnakeCaseNamingConvention();
@@ -83,7 +53,7 @@ public static class OperatorsModule
 
         services
             .AddHealthChecks()
-            .AddNpgSql(connectionString, name: "operators-db", tags: ["ready", "module:operators"]);
+            .AddSqlServer(connectionString, name: "operators-db", tags: ["ready", "module:operators"]);
 
         return services;
     }
