@@ -79,18 +79,22 @@ duplicate registrations across modules are idempotent.
 **Persistence rules:**
 
 - Schema-per-module via `modelBuilder.HasDefaultSchema("<module>")` and
-  `npg.MigrationsHistoryTable("__EFMigrationsHistory", "<module>")`.
+  `sql.MigrationsHistoryTable("__EFMigrationsHistory", "<module>")` inside
+  the `UseSqlServer(...)` options callback. SQL Server defaults the
+  migrations history to `dbo`; routing it per-module keeps each schema
+  self-describing.
 - Snake_case columns via the `EFCore.NamingConventions` package
   (`options.UseSnakeCaseNamingConvention()`). Apply on **both** the runtime
   DbContext options and the design-time factory, or `dotnet ef migrations add`
-  scaffolds PascalCase column names.
+  scaffolds PascalCase column names. The package is provider-agnostic — it
+  rewrites column names regardless of the underlying engine.
 - Enum columns persisted as string with `.HasConversion<string>().HasMaxLength(N)`.
   Keeps the column self-describing and makes adding values append-only at any
   ordinal position.
 - Audit columns (`created_at`, `created_by_type`, `created_by_id`,
   `last_modified_*`) configured explicitly on every entity.
 
-**Health check:** `services.AddHealthChecks().AddNpgSql(connectionString,
+**Health check:** `services.AddHealthChecks().AddSqlServer(connectionString,
 name: "<module>-db", tags: ["ready", "module:<module>"])`.
 
 ## Identity: embedded OpenIddict + ASP.NET Core Identity
@@ -492,7 +496,7 @@ Trade-offs you're buying into:
   and the outbox `SaveChanges` run in separate transactions. A crash
   between (4) and (5) leaves the business row committed but the
   integration event undelivered. The window is bounded by request-tail
-  time (~ms). True cross-context atomicity (shared `NpgsqlConnection`
+  time (~ms). True cross-context atomicity (shared `SqlConnection`
   + shared `IDbContextTransaction`) and a reconciliation job are
   follow-ups documented in ROADMAP.md and DECISIONS.md ADR #26.
 - The `messaging.outbox_message` table is **empty in steady state**

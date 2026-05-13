@@ -143,11 +143,14 @@ Interceptors (`AuditableSaveChangesInterceptor`,
 `DispatchDomainEventsInterceptor` from `Pam.Shared`) are registered with
 `services.TryAddScoped<...>()` so multiple modules don't conflict.
 
-Persistence uses schema-per-module (`modelBuilder.HasDefaultSchema("…")`)
-plus snake_case columns (`options.UseSnakeCaseNamingConvention()` from
-the `EFCore.NamingConventions` package — apply on **both** runtime and
-design-time DbContext setup). Health probe via
-`AddHealthChecks().AddNpgSql(connectionString, name: "<module>-db",
+Persistence uses schema-per-module (`modelBuilder.HasDefaultSchema("…")`
+plus `sql.MigrationsHistoryTable("__EFMigrationsHistory", "<schema>")`
+inside the `UseSqlServer(...)` callback so each module's history table
+lives next to its tables instead of in `dbo`). Snake_case columns via
+`options.UseSnakeCaseNamingConvention()` from the
+`EFCore.NamingConventions` package — apply on **both** runtime and
+design-time DbContext setup. Health probe via
+`AddHealthChecks().AddSqlServer(connectionString, name: "<module>-db",
 tags: ["ready", "module:<module>"])`.
 
 After scaffolding the module, register it in `Pam.Api`:

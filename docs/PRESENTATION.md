@@ -233,7 +233,7 @@ to `audit.command_log`:
 - `correlation_id` (W3C activity id, propagated via header)
 - `actor_type` + `actor_id` (Owner/Manager/Operator/System/Anonymous)
 - `request_type` (the C# command type name)
-- `payload_json` (jsonb, with sensitive fields redacted)
+- `payload_json` (`nvarchar(max)` JSON, with sensitive fields redacted; SQL Server's JSON path operators query it)
 - `started_at` / `completed_at` / `duration_ms`
 - `status` (Success / Failure) + error type/message on failure
 
@@ -288,7 +288,7 @@ Instrumentation sources tagged:
 - ASP.NET Core (every request → span)
 - HttpClient (outbound calls)
 - EF Core (every query → span with SQL)
-- Npgsql (the driver itself)
+- `Microsoft.Data.SqlClient` (the driver itself)
 - MassTransit (publishes + consumes)
 - `Pam.*` ActivitySources (any `using var activity = …` we add)
 
@@ -513,11 +513,15 @@ tests/
 
 > Anticipate these. Have a one-liner for each ready.
 
-**"Why SQL Server and not SQL Server like GBS?"**
-PR pinned in ROADMAP; the short answer is JSONB, advisory locks, snake_case
-idioms, lower license cost, no behavior we lose vs SQL Server. The GBS
-migration is a one-time cost we'd pay either way to clean 357 tables +
-1,901 stored procs.
+**"Why SQL Server (and not Postgres)?"**
+ADR #27 — picked on operational fit, not technical merit. IT already
+operates SQL Server in production (runbooks, backup chain, DR rehearsal,
+on-call rotation); Postgres would be a green-field operational
+introduction with no existing on-call. Peer alignment with GBS reduces
+the migration surface: schema-per-schema cutover stays in-engine, no
+cross-RDBMS conversion. ADR #22 (which originally picked Postgres on
+technical grounds — JSON path, snake_case, partitioning) is left as
+SUPERSEDED so the technical trade-offs stay on the record.
 
 **"Why .NET and not Go or JavaScript?"**
 Type system fits regulated finance, hiring pool in LATAM is large, the

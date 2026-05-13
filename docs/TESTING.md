@@ -245,7 +245,7 @@ you don't have to dig.
 | Test framework | xUnit v3 only | `Directory.Packages.props` pins `xunit.v3` 3.x and `xunit.runner.visualstudio` 3.x |
 | Assertions | FluentAssertions 7.2.0 (Apache-2.0 last) | Don't bump to 8.x — license change |
 | Mocking | NSubstitute when needed; not for `DbContext`/`IPublishEndpoint` | — |
-| Containers | Testcontainers 4.x | New API uses image-in-constructor (`new PostgreSqlBuilder("postgres:17")`) — the parameterless ctor + `.WithImage(...)` is obsolete |
+| Containers | Testcontainers 4.x | New API uses image-in-constructor (`new MsSqlBuilder("mcr.microsoft.com/mssql/server:2022-latest")`) — the parameterless ctor + `.WithImage(...)` is obsolete. `Testcontainers.MsSql` runs under Rosetta on Apple Silicon (`platform: linux/amd64`); first-container boot is the slowest part of the integration suite. |
 | Cancellation in async tests | `TestContext.Current.CancellationToken` | xUnit1051 analyzer enforces |
 | `HttpClient.GetAsync` | Pass `Uri`, not `string` | CA2234 analyzer enforces |
 | One factory per integration test | `await using var factory = new PamApiFactory(containers);` | Sharing trips DP keyring races |

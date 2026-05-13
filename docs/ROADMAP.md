@@ -22,7 +22,7 @@ fires per command.
    between the two leaves the business row persisted and the
    integration event undelivered — a sub-millisecond at-most-once
    window, but a real one. Two paths forward, pick by Phase B:
-   (a) shared `NpgsqlConnection` + shared `IDbContextTransaction` across
+   (a) shared `SqlConnection` + shared `IDbContextTransaction` across
    both DbContexts (each `AddDbContext<T>` resolves the ambient
    connection from a scoped service; a MediatR pipeline behavior
    begins the transaction before queries; `AutoTransactionBehavior` is
@@ -377,9 +377,10 @@ Traces, metrics and logs now leave the API over OTLP. Local dev uses the
 `:4318`). Resource attributes (`service.name`, `service.version`,
 `deployment.environment`, `host.name`) are emitted on every signal.
 
-Instrumentation sources: AspNetCore + HttpClient + EF Core + Npgsql +
-MassTransit + `Pam.*` ActivitySources/Meters. Logs flow through Serilog's
-OpenTelemetry sink alongside the existing Console/Seq sinks.
+Instrumentation sources: AspNetCore + HttpClient + EF Core +
+`Microsoft.Data.SqlClient` + MassTransit + `Pam.*` ActivitySources/Meters.
+Logs flow through Serilog's OpenTelemetry sink alongside the existing
+Console/Seq sinks.
 
 Production swaps the endpoint via `OTEL_EXPORTER_OTLP_ENDPOINT` —
 Grafana Cloud, self-hosted LGTM split out, Honeycomb, Datadog, …

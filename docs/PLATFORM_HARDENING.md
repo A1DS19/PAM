@@ -37,9 +37,9 @@ Traces, metrics, and logs leave Pam.Api over OTLP. Local dev runs the
 Resource attributes (`service.name`, `service.version`,
 `deployment.environment`, `host.name`) tag every signal so dashboards
 can segment by env/instance once more than one runs. Instrumentation:
-AspNetCore, HttpClient, EF Core, Npgsql, MassTransit, `Pam.*`
-ActivitySources/Meters. Logs flow through Serilog's OpenTelemetry sink
-alongside the existing Console/Seq sinks.
+AspNetCore, HttpClient, EF Core, `Microsoft.Data.SqlClient`, MassTransit,
+`Pam.*` ActivitySources/Meters. Logs flow through Serilog's OpenTelemetry
+sink alongside the existing Console/Seq sinks.
 
 ### 2. Shared signing material + DP keys — `chore/multi-replica-keys`
 
@@ -132,9 +132,11 @@ fails with a UNIQUE violation that surfaces as a 500 during startup.
 EF migrations already serialise through `__EFMigrationsHistory`, but
 seeding had no such lock.
 
-`IdentitySeeder.SeedAsync` is now wrapped in a transaction +
-`sp_getapplock(100_001)`. The `xact` variant releases on
-commit/rollback so a crash mid-seed doesn't orphan the lock. Once
+`IdentitySeeder.SeedAsync` is now wrapped in a transaction + an
+exclusive `EXEC sp_getapplock @Resource='pam-seeder-100001',
+@LockMode='Exclusive', @LockOwner='Transaction', @LockTimeout=-1`.
+`@LockOwner='Transaction'` ties release to the surrounding transaction
+commit/rollback, so a crash mid-seed doesn't orphan the lock. Once
 replica A finishes, replica B acquires, finds every step's
 precondition met (idempotent), commits quickly.
 

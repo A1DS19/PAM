@@ -458,7 +458,7 @@ before now produces:
 transactions. A crash between the two leaves the business row
 committed but the integration event undelivered. The window is
 bounded by request-tail-time (~ms). True cross-context atomicity via
-shared `NpgsqlConnection` + shared `IDbContextTransaction` is logged
+shared `SqlConnection` + shared `IDbContextTransaction` is logged
 as the next follow-up in [ROADMAP.md](ROADMAP.md). A reconciliation
 job lands as a defensive backstop regardless of which atomicity path
 we take.
