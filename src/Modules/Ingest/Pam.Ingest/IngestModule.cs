@@ -4,9 +4,11 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Pam.Ingest.Data;
+using Pam.Ingest.Transactions.Reconciliation;
 using Pam.Ingest.Vendors.TwentyOneG;
 using Pam.Ingest.Vendors.TwentyOneG.Soap;
 using Pam.Shared.Data.Interceptors;
+using Pam.Shared.Messaging.Reconciliation;
 using SoapCore;
 
 namespace Pam.Ingest;
@@ -35,7 +37,8 @@ public static class IngestModule
             {
                 options.AddInterceptors(
                     sp.GetRequiredService<AuditableSaveChangesInterceptor>(),
-                    sp.GetRequiredService<DispatchDomainEventsInterceptor>()
+                    sp.GetRequiredService<DispatchDomainEventsInterceptor>(),
+                    sp.GetRequiredService<AmbientTransactionInterceptor>()
                 );
                 options.UseSqlServer(
                     connectionString,
@@ -67,6 +70,14 @@ public static class IngestModule
         >();
         services.AddScoped<ITwentyOneGValidateSessionService, TwentyOneGValidateSessionService>();
         services.AddScoped<ITwentyOneGGetBalanceService, TwentyOneGGetBalanceService>();
+
+        // Reconciler backstop. OutboxReconciliationService (registered in
+        // AddPamMassTransit) iterates every IOutboxReconciler every
+        // Messaging:Reconciliation:Interval and asks each module to
+        // republish business rows whose dispatched-log entry is missing.
+        // Scoped because the reconciler depends on scoped DbContexts +
+        // IPublishEndpoint.
+        services.AddScoped<IOutboxReconciler, IngestOutboxReconciler>();
 
         services
             .AddHealthChecks()

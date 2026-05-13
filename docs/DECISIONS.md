@@ -9,6 +9,94 @@ Rough ADR shape, kept terse. Order is reverse-chronological.
 
 ---
 
+## 28. Atomic cross-context outbox via shared `SqlConnection` + reconciler backstop — 2026-05-13
+
+**Context.** ADR #26 picked a single shared `PamMessagingDbContext` for the
+bus-wide MassTransit outbox after MT 8.5.x's
+`IScopedBusContextProvider<IBus>` constraint ruled out per-module outbox
+DbContexts. That fix made publish routing correct, but business
+`SaveChanges` (module `DbContext`) and outbox `SaveChanges`
+(`PamMessagingDbContext`) committed in **separate transactions** — a
+sub-millisecond under-deliver window between the two commits. Acceptable
+for everything currently shipped (advisory side-effects); not acceptable
+for Wallet, where a missed `LedgerEntryPosted` corrupts every downstream
+projection.
+
+The blessed MT 8.5 atomicity recipe is "register `InboxState` /
+`OutboxState` / `OutboxMessage` on the *same* DbContext that owns the
+business tables" — works for single-module apps, doesn't compose for
+seven modules. MT 9.1+ adds MultiBus + per-DbContext outbox; off the
+table while ADR #5 pins MT at 8.5.9 (last Apache-2.0 release).
+`TransactionScope` / MSDTC is explicitly incompatible with the EF outbox
+(MT discussion #4972 — the outbox uses `IDbContextTransaction` directly,
+doesn't enlist in ambient `TransactionScope`).
+
+**Decision.** Implement the EF-Core idiom **shared `SqlConnection` +
+`IDbContextTransaction` across business and messaging contexts**, plus
+an `IHostedService` reconciler as a defensive backstop.
+
+Atomicity stack:
+
+- `AtomicOutboxBehavior<TRequest, TResponse>` (innermost MediatR
+  behavior, replaces `OutboxFlushBehavior`) — opens the txn on
+  `PamMessagingDbContext` at the start of every `ICommand`, stashes the
+  `IDbContextTransaction` in a scoped `AmbientTransaction` service,
+  runs the handler, calls `messaging.SaveChangesAsync`, commits.
+  Reentry-guarded so nested `ISender.Send` inside a command doesn't
+  open a second txn.
+- `AmbientTransactionInterceptor` (added to every business DbContext)
+  — on `SavingChangesAsync`, reads `AmbientTransaction.Current` and
+  calls `Database.UseTransactionAsync(txn.GetDbTransaction())`. The
+  business context's `SqlConnection` switches to messaging's
+  connection for that save; business INSERT/UPDATE runs in the shared
+  txn. No-ops outside a command scope (migrations, seeders, queries).
+- `OutboxDispatchedLog` (`messaging.outbox_dispatched_log`) — composite
+  PK `(module, business_pk, event_type)`, written by bridge handlers
+  in the same atomic txn as the publish. Source of truth for "this
+  event was successfully queued" without scanning
+  `messaging.outbox_message` (which the delivery service empties on
+  success).
+
+Reconciler backstop:
+
+- `IOutboxReconciler` per publishing module — currently
+  `IngestOutboxReconciler`; new modules add their own.
+- `OutboxReconciliationService` (`BackgroundService`) iterates every
+  registered reconciler on `Messaging:Reconciliation:Interval`
+  (5 min default), per-reconciler exception isolation, configurable
+  via `OutboxReconciliationOptions.Enabled` (off in integration tests
+  to avoid racing probes).
+
+**Consequences.**
+- Zero under-deliver window inside the request scope. One `COMMIT`
+  durably persists the business row + the outbox row + the
+  dispatched-log row.
+- Single `SqlConnection` per command — every business DbContext save
+  serialises through the same connection. MediatR pipeline is already
+  sequential, so no regression vs the previous two-pool-roundtrip
+  setup; net effect is likely a tiny end-to-end win.
+- Pattern is **unblessed by MT** — shared `SqlConnection` +
+  `UseTransaction` is an EF Core idiom the MT docs don't describe.
+  The EF outbox doesn't care HOW `SaveChangesAsync` runs as long as it
+  does; verified end-to-end against the existing integration suite.
+  Risk: an MT future change could break it. Mitigation: integration
+  tests catch it on upgrade.
+- Audit (`Pam.Audit`) intentionally NOT enrolled on the ambient txn —
+  `AuditBehavior` sits outside `AtomicOutboxBehavior` so `command_log`
+  rows persist even when the atomic txn rolls back. Audit trail
+  survives every failure mode.
+- `DispatchDomainEventsInterceptor` stays pre-save; its earlier
+  atomicity comment now actually describes the behavior.
+- Reconciler is at-least-once; consumers must dedupe via MT's
+  `UseEntityFrameworkOutbox<PamMessagingDbContext>` on the receive
+  endpoint (lands with `Pam.Notifications`'s first consumer PR).
+
+Wired in `Pam.Shared.Messaging.AddPamMassTransit`. Reconcilers live in
+each module's `Reconciliation/` folder; the dispatched-log entity lives
+in `Pam.Shared.Messaging.Reconciliation`.
+
+---
+
 ## 27. Database platform: SQL Server (supersedes ADR #22) — 2026-05-12
 
 **Status:** supersedes ADR #22 ("Postgres over MS SQL Server").

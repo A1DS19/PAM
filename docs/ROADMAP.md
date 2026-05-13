@@ -14,23 +14,22 @@ the same day, refactored to a shared `PamMessagingDbContext` (schema
 declares in RabbitMQ and the `Flushed N outbox row(s)` debug line
 fires per command.
 
-1. **Cross-context outbox atomicity (currently a separate-transaction
-   gap).** The shared-messaging-DbContext fix in ADR #26 routes every
-   publish into `messaging.outbox_message` correctly, but the business
-   `SaveChanges` (module DbContext) and the outbox `SaveChanges`
-   (messaging DbContext) commit in **separate transactions**. A crash
-   between the two leaves the business row persisted and the
-   integration event undelivered — a sub-millisecond at-most-once
-   window, but a real one. Two paths forward, pick by Phase B:
-   (a) shared `SqlConnection` + shared `IDbContextTransaction` across
-   both DbContexts (each `AddDbContext<T>` resolves the ambient
-   connection from a scoped service; a MediatR pipeline behavior
-   begins the transaction before queries; `AutoTransactionBehavior` is
-   overridden), or (b) upgrade `MassTransit.EntityFrameworkCore` to
-   9.1 once the commercial-license question is resolved and use the
-   per-DbContext `AddEntityFrameworkOutbox<TBus, TDbContext>`
-   overload. A reconciliation job that diff-checks business rows
-   against delivered events lands as a defensive backstop regardless.
+1. **Cross-context outbox atomicity — SHIPPED.** Path (a) landed:
+   `AtomicOutboxBehavior` (innermost MediatR behavior) opens a shared
+   `IDbContextTransaction` on `PamMessagingDbContext`, stashes it in a
+   scoped `AmbientTransaction` service, and an
+   `AmbientTransactionInterceptor` on every business `DbContext` enrols
+   on the same transaction via `Database.UseTransactionAsync` in
+   `SavingChangesAsync`. One SQL `COMMIT` persists the business row +
+   the `OutboxMessage` row + the `outbox_dispatched_log` row together;
+   crash before commit rolls back everything. The
+   `OutboxReconciliationService` (`IHostedService`, 5-minute interval)
+   is the defensive backstop: each publishing module implements
+   `IOutboxReconciler` and republishes business rows that have no
+   matching `outbox_dispatched_log` entry (e.g.
+   `IngestOutboxReconciler` for Ingest). See DECISIONS.md ADR #28 for
+   the design rationale, why path (b) (MT 9.1 multi-DbContext outbox)
+   stays off the table, and why `TransactionScope` was rejected.
 2. **`Pam.Ingest` Phase A — intercept-and-forward.** Five concrete
    sub-tasks, ordered for short-PR delivery; each item is the next
    session's starting point if the one above merges. The column names

@@ -492,13 +492,26 @@ Trade-offs you're buying into:
   That's the point — atomic by design. Don't put best-effort side
   effects (logging, metrics) in a domain handler; put them in an
   integration-event consumer.
-- **Atomicity caveat (currently accepted).** The business `SaveChanges`
-  and the outbox `SaveChanges` run in separate transactions. A crash
-  between (4) and (5) leaves the business row committed but the
-  integration event undelivered. The window is bounded by request-tail
-  time (~ms). True cross-context atomicity (shared `SqlConnection`
-  + shared `IDbContextTransaction`) and a reconciliation job are
-  follow-ups documented in ROADMAP.md and DECISIONS.md ADR #26.
+- **Single-transaction atomicity guarantee.** `AtomicOutboxBehavior`
+  (innermost MediatR behavior, in `Pam.Shared.Messaging.Behaviors`)
+  opens an `IDbContextTransaction` on `PamMessagingDbContext` at the
+  start of every command. The `AmbientTransactionInterceptor` registered
+  on every business `DbContext` reads from a scoped `AmbientTransaction`
+  service in `SavingChangesAsync` and calls `Database.UseTransactionAsync`
+  so the business context switches to the messaging context's
+  `SqlConnection`. After the handler returns, the behavior flushes
+  messaging and calls `CommitAsync` — one SQL `COMMIT` durably persists
+  the business row, the `OutboxMessage` row, and the
+  `outbox_dispatched_log` row together. Crash anywhere before the commit
+  rolls back the whole request. See `AtomicOutboxBehavior.cs` for the
+  full flow and DECISIONS.md ADR #28.
+- **Reconciler backstop.** The atomic transaction is the primary
+  correctness mechanism; `OutboxReconciliationService`
+  (`IHostedService`, every 5 min by default) is the defensive backstop
+  for hardware faults, network partitions during broker dispatch, or
+  future regressions to the atomicity invariant. Each publishing module
+  implements `IOutboxReconciler` and republishes orphan rows (business
+  row exists, no matching `outbox_dispatched_log` entry).
 - The `messaging.outbox_message` table is **empty in steady state**
   — that's correct outbox semantics: the delivery service removes
   delivered rows. Use the API log's `Flushed N outbox row(s)` debug

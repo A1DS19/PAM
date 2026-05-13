@@ -52,7 +52,8 @@ public static class IdentityModule
             {
                 options.AddInterceptors(
                     sp.GetRequiredService<AuditableSaveChangesInterceptor>(),
-                    sp.GetRequiredService<DispatchDomainEventsInterceptor>()
+                    sp.GetRequiredService<DispatchDomainEventsInterceptor>(),
+                    sp.GetRequiredService<AmbientTransactionInterceptor>()
                 );
                 options.UseSqlServer(
                     connectionString,

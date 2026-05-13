@@ -14,8 +14,8 @@ public static class OperatorsModule
     // AddPamMassTransit. BrandCreatedDomainHandler keeps calling
     // IPublishEndpoint.Publish — the publish is intercepted by the
     // bus-wide filter and the OutboxMessage row lands in the messaging
-    // context, flushed at the tail of the command pipeline by
-    // OutboxFlushBehavior.
+    // context, committed atomically with the business row by
+    // AtomicOutboxBehavior at the tail of the command pipeline.
 
     public static IServiceCollection AddOperatorsModule(
         this IServiceCollection services,
@@ -34,7 +34,8 @@ public static class OperatorsModule
             {
                 options.AddInterceptors(
                     sp.GetRequiredService<AuditableSaveChangesInterceptor>(),
-                    sp.GetRequiredService<DispatchDomainEventsInterceptor>()
+                    sp.GetRequiredService<DispatchDomainEventsInterceptor>(),
+                    sp.GetRequiredService<AmbientTransactionInterceptor>()
                 );
                 options.UseSqlServer(
                     connectionString,

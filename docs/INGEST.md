@@ -453,15 +453,17 @@ before now produces:
   outbox semantic; verify via the log line or the exchange list, not
   a SELECT against the table.
 
-**Atomicity caveat (carried forward as a follow-up).** The business
-`SaveChanges` and the outbox `SaveChanges` run in separate
-transactions. A crash between the two leaves the business row
-committed but the integration event undelivered. The window is
-bounded by request-tail-time (~ms). True cross-context atomicity via
-shared `SqlConnection` + shared `IDbContextTransaction` is logged
-as the next follow-up in [ROADMAP.md](ROADMAP.md). A reconciliation
-job lands as a defensive backstop regardless of which atomicity path
-we take.
+**Atomicity guarantee (shipped in ADR #28).** `AtomicOutboxBehavior`
+opens an `IDbContextTransaction` on `PamMessagingDbContext` at the
+start of every command and the `AmbientTransactionInterceptor` enrols
+`IngestDbContext` on the same transaction in `SavingChangesAsync`. The
+`VendorTransaction` row, the `OutboxMessage` row, and the
+`outbox_dispatched_log` row commit in a single SQL `COMMIT`. Crash
+anywhere before commit rolls back all three. `IngestOutboxReconciler`
+(`IOutboxReconciler` impl, runs under `OutboxReconciliationService`
+every 5 min) republishes any orphan business rows whose dispatched-log
+entry is missing — the defensive backstop for failure modes the
+transaction can't cover.
 
 ### Smoke test (SOAP envelope, end-to-end)
 

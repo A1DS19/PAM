@@ -191,16 +191,19 @@ OutboxFlushBehavior — tail of command pipeline
                   RabbitMQ exchange
 ```
 
-> What this buys us: once the outbox row is committed, a crash before
-> broker publish can never lose the event — the row in
+> What this buys us: once the atomic transaction commits, a crash
+> before broker publish can never lose the event — the row in
 > `messaging.outbox_message` is the source of truth and the delivery
-> service retries until the broker accepts it. A sub-millisecond
-> under-deliver window between business and outbox commits is the
-> remaining gap, covered by ROADMAP item #1 (shared-connection-shared-
-> transaction work) and a reconciliation backstop. **Non-negotiable
-> for Wallet** — a missed "balance changed" event corrupts financial
-> state. The shared messaging schema covers Wallet from its first PR
-> automatically.
+> service retries until the broker accepts it. The previously-flagged
+> sub-millisecond under-deliver gap between business and outbox
+> commits is closed (ADR #28): `AtomicOutboxBehavior` opens one
+> `IDbContextTransaction` on `PamMessagingDbContext`, an
+> `AmbientTransactionInterceptor` enrols every business DbContext on
+> the same transaction, and a single `COMMIT` persists business +
+> outbox + dispatched-log together. `OutboxReconciliationService` is
+> the defensive backstop for hardware faults that even the atomic
+> commit can't see. **Non-negotiable for Wallet** — and Wallet inherits
+> the full guarantee on day one from the shared messaging substrate.
 
 ---
 

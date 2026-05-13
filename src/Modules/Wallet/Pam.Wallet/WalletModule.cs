@@ -33,7 +33,8 @@ public static class WalletModule
             {
                 options.AddInterceptors(
                     sp.GetRequiredService<AuditableSaveChangesInterceptor>(),
-                    sp.GetRequiredService<DispatchDomainEventsInterceptor>()
+                    sp.GetRequiredService<DispatchDomainEventsInterceptor>(),
+                    sp.GetRequiredService<AmbientTransactionInterceptor>()
                 );
                 options.UseSqlServer(
                     connectionString,

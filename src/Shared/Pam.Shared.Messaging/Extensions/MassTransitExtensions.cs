@@ -4,8 +4,12 @@ using MediatR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Pam.Shared.Data;
+using Pam.Shared.Data.Interceptors;
 using Pam.Shared.Messaging.Behaviors;
 using Pam.Shared.Messaging.Data;
+using Pam.Shared.Messaging.Reconciliation;
 
 namespace Pam.Shared.Messaging.Extensions;
 
@@ -56,15 +60,31 @@ public static class MassTransitExtensions
             }
         );
 
-        // Pipeline behavior runs after every ICommand handler — flushes
-        // the change-tracker outbox rows that MT's UseBusOutbox accumulated
-        // during the handler's SaveChanges. Registered AFTER AddPamMediatR
-        // (which Program.cs always calls first) so it sits innermost in
-        // the MediatR pipeline, closest to the handler.
+        // Scoped per-request transaction holder + interceptor that enrols
+        // every business DbContext onto the AtomicOutboxBehavior's
+        // transaction. Each module's <Module>Module.cs picks up the
+        // interceptor via TryAddScoped + options.AddInterceptors.
+        services.TryAddScoped<AmbientTransaction>();
+        services.TryAddScoped<AmbientTransactionInterceptor>();
+
+        // Pipeline behavior wraps every command in a single transaction
+        // that spans the business DbContext + PamMessagingDbContext.
+        // Registered AFTER AddPamMediatR (which Program.cs always calls
+        // first) so it sits innermost in the MediatR pipeline, closest to
+        // the handler. See AtomicOutboxBehavior.cs for the full flow.
         services.AddTransient(
             typeof(IPipelineBehavior<,>),
-            typeof(OutboxFlushBehavior<,>)
+            typeof(AtomicOutboxBehavior<,>)
         );
+
+        // Reconciler backstop. Each module that publishes integration
+        // events registers an IOutboxReconciler in its AddXModule.
+        // OutboxReconciliationService iterates them on the configured
+        // Interval; orphan business rows (no matching dispatched_log row)
+        // get republished through the atomic outbox path.
+        services.AddOptions<OutboxReconciliationOptions>()
+            .Bind(configuration.GetSection(OutboxReconciliationOptions.SectionName));
+        services.AddHostedService<OutboxReconciliationService>();
 
         services.AddMassTransit(x =>
         {
