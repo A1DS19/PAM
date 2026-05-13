@@ -192,7 +192,7 @@ enable in staging or behind admin auth, pull `MapOpenApi()` +
 ## Common gotchas
 
 - `dotnet run --no-build` runs the cached DLL — new migrations won't be
-  picked up. Always `dotnet build` after `make migrate-add`.
+  picked up. Always `dotnet build` after `make -C api migrate-add`.
 - `BannedSymbols.txt` blocks `DateTime.UtcNow`, `DateTime.Now`,
   `DateTimeOffset.Now`. `DateTimeOffset.UtcNow` is allowed (used in
   `IntegrationEvent` record init defaults).

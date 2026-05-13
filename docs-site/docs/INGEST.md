@@ -92,9 +92,9 @@ flowchart TB
     MsgDb[("messaging.outbox_message<br/>messaging.outbox_dispatched_log")]:::db
     Bus["RabbitMQ<br/>TransactionIngestedIntegrationEvent"]:::bus
     Notif["Pam.Notifications<br/>(consumer)"]:::consumer
-    AuditMod["Pam.Audit<br/>(consumer, future)"]:::consumer
     WalletMod["Pam.Wallet<br/>(consumer, Phase C+)"]:::consumer
     ReportMod["Reporting / Databricks<br/>(consumer, future)"]:::consumer
+    AuditsMod["Pam.Audits<br/>(consumer, future regulatory)"]:::consumer
     Reconciler["IngestOutboxReconciler<br/>BackgroundService (5 min)"]:::recon
 
     Vendor -->|"HTTP / SOAP"| Endpoint
@@ -106,9 +106,9 @@ flowchart TB
     MsgDb -->|"COMMIT #2<br/>(OutboxFlushBehavior)"| MsgDb
     MsgDb -->|"BusOutboxDeliveryService"| Bus
     Bus --> Notif
-    Bus --> AuditMod
     Bus --> WalletMod
     Bus --> ReportMod
+    Bus --> AuditsMod
 
     Reconciler -. "scan (lookback 2d)" .-> IngestDb
     Reconciler -. "diff against<br/>dispatched-log" .-> MsgDb

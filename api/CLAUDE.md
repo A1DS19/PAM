@@ -4,9 +4,11 @@ This file is loaded automatically by Claude Code on every session. It
 captures the conventions that aren't enforced by analyzers / arch tests
 and that Claude would otherwise drift on. Read once, follow always.
 
-**Trust order**: this file → `docs/ARCHITECTURE.md` → `docs/DECISIONS.md`
-ADRs → other topical docs. If something here contradicts a doc, the doc
-wins and this file is stale — update it.
+**Trust order**: this file → `../docs-site/docs/ARCHITECTURE.md` →
+`../docs-site/docs/internal/DECISIONS.md` ADRs → other topical docs in
+`../docs-site/docs/` (published) and `../docs-site/docs/internal/`
+(internal-only). If something here contradicts a doc, the doc wins —
+update this file.
 
 ---
 
@@ -114,8 +116,8 @@ also follow them when writing new code, not just when fixing red tests.
    entities extend `Entity<TId>`. Records that travel on the wire don't
    extend anything — they're DTOs.
 
-See `docs/ARCHITECTURE.md` "Domain events vs integration events" and
-"Modular monolith" sections for the full reasoning.
+See `../docs-site/docs/ARCHITECTURE.md` "Domain events vs integration
+events" and "Modular monolith" sections for the full reasoning.
 
 ---
 
@@ -225,9 +227,10 @@ Don't carry it forward.
   metrics, fire-and-forget calls) in a domain handler — put them in
   an integration-event consumer.
 
-See `docs/ARCHITECTURE.md` "Outbox + pre-save domain-event dispatch"
-for the full trade-off discussion and `docs/DECISIONS.md` ADR #26 for
-the multi-module-outbox topology rationale.
+See `../docs-site/docs/ARCHITECTURE.md` "Outbox + pre-save domain
+dispatch" for the full trade-off discussion and
+`../docs-site/docs/internal/DECISIONS.md` ADR #26 for the
+multi-module-outbox topology rationale.
 
 ---
 
@@ -270,7 +273,8 @@ And commands that should invalidate after success:
 public sealed record UpdateUserCommand(...) : ICommand;
 ```
 
-The `CachingBehavior` handles the round-trip. See `docs/CACHING.md`.
+The `CachingBehavior` handles the round-trip. See
+`../docs-site/docs/internal/CACHING.md`.
 
 Don't cache:
 - Auth tokens / sessions (they're already cached by OpenIddict).
@@ -314,14 +318,18 @@ These libraries are pinned at their last permissively-licensed release
 
 ## When in doubt
 
-- For deep architectural reasoning → `docs/ARCHITECTURE.md`.
-- For the why-and-when of a specific decision → `docs/DECISIONS.md`
-  (20+ ADRs, reverse-chronological).
-- For module-specific topical reference →
-  `docs/AUTH.md` (Identity), `docs/INGEST.md` (Ingest),
-  `docs/CACHING.md`, `docs/TESTING.md`.
-- For "is it done?" → `docs/ROADMAP.md`.
-- For "how do I run it?" → `docs/LOCAL_DEV.md`.
+Published docs (rendered on the Docusaurus site, live in
+`../docs-site/docs/`):
 
-The presentation deck for the May 12 meeting is in
-`docs/PRESENTATION.md`.
+- Deep architectural reasoning → `ARCHITECTURE.md`.
+- Module-specific topical → `AUTH.md` (Identity), `INGEST.md`,
+  `CORE_PLATFORM_MAPPING.md`, `TESTING.md`, `ENDPOINTS.md`.
+- "How do I run it?" → `LOCAL_DEV.md`.
+
+Internal-only docs (live in `../docs-site/docs/internal/`):
+
+- Why-and-when of a specific decision → `DECISIONS.md` (20+ ADRs,
+  reverse-chronological).
+- `CACHING.md`, `DB_SCALING.md`, `PLATFORM_HARDENING.md`.
+- "Is it done?" → `ROADMAP.md`.
+- May 12 presentation → `PRESENTATION.md`.

@@ -144,10 +144,17 @@ defaults where DI is impractical.
 tell a Player self-suspending vs an Operator suspending them from the
 audit columns alone.
 
-This is **application** audit logging. Regulatory audit (immutable,
-cryptographically chained) is a separate `Pam.Audits` module that
-subscribes to integration events — lands when a real regulatory
-requirement demands it.
+## Audit modules — two layers, not the same thing
+
+| Module | Status | Storage | How it captures |
+|---|---|---|---|
+| **`Pam.Audit`** (singular) | **exists today** | `audit.command_log` | In-process via `AuditBehavior` MediatR pipeline. Every `ICommand` writes a row with actor, correlation id, payload (sensitive fields redacted by `SensitiveJsonRedactor`), timing, success/failure. Queries (`IQuery<T>`) are not audited |
+| **`Pam.Audits`** (plural) | future | event-sourced, hash-chained | Subscribes to integration events on the bus; stores `(occurredAt, actor, ip, correlationId, payload, hash, prevHash)` so any tampering is detectable. Lands when a real regulatory requirement demands it |
+
+`Pam.Audit` is the application-level audit log; rows are mutable in
+principle (no `UPDATE` paths exist, but nothing prevents one). The
+future `Pam.Audits` is the regulator-grade, append-only,
+cryptographically chained one.
 
 ## Domain events vs integration events
 

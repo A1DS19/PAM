@@ -6,14 +6,16 @@ What each suite covers, why we drew the lines, and how to run them.
 
 | Suite | Location | Tests | Runtime | Covers |
 |---|---|---|---|---|
-| Operators unit | `api/tests/Pam.Operators.UnitTests/` | 18 | ~100ms | `Brand` aggregate + `CreateBrand` validator |
-| Identity unit | `api/tests/Pam.Identity.UnitTests/` | 52 | ~1s | 9 validators + `PermissionResolver` over EF in-memory |
+| Operators unit | `api/tests/Pam.Operators.UnitTests/` | 9 | ~100ms | `Brand` aggregate + `CreateBrand` validator |
+| Identity unit | `api/tests/Pam.Identity.UnitTests/` | 35 | ~1s | Validators + `PermissionResolver` over EF in-memory |
+| Ingest unit | `api/tests/Pam.Ingest.UnitTests/` | 2 | `<100ms` | `VendorTransaction` aggregate factory placeholders |
 | Players unit | `api/tests/Pam.Players.UnitTests/` | 1 | `<100ms` | `Player.Create` placeholder |
 | Wallet unit | `api/tests/Pam.Wallet.UnitTests/` | 1 | `<100ms` | `Account.Open` placeholder |
-| Architecture | `api/tests/Pam.ArchitectureTests/` | 8 | ~250ms | NetArchTest rules: module boundary, event shape, aggregate inheritance |
-| Integration | `api/tests/Pam.IntegrationTests/` | 3 | ~3s (+10–20s first-run container boot) | Health probes + auth fence via Testcontainers (SQL Server / RabbitMQ / Redis) |
+| Shared unit | `api/tests/Pam.Shared.UnitTests/` | 25 | ~200ms | Caching behavior + cache-key generator, `AuditBehavior`, `OpenTelemetryBehavior`, `SensitiveJsonRedactor` |
+| Architecture | `api/tests/Pam.ArchitectureTests/` | 9 | ~250ms | NetArchTest rules: module boundary, event shape, aggregate inheritance |
+| Integration | `api/tests/Pam.IntegrationTests/` | 10 | ~3s (+10–20s first-run container boot) | Health probes, auth fence, outbox reconciliation, Testcontainers (SQL / RabbitMQ / Redis) |
 
-**Total: 83 tests.** Unit + architecture finish under 2s; integration
+**Total: 92 tests.** Unit + architecture finish under 2s; integration
 is dominated by one-time container boot.
 
 ## Unit tests (one project per module)
@@ -29,11 +31,15 @@ broker, no DI graph.
 - `PermissionResolver` over EF in-memory — the **only** place we use
   in-memory EF, because resolving a join table benefits from a real
   querying provider even if not SQL Server.
+- **Shared** suite covers cross-cutting infra: `CachingBehavior` +
+  `CacheKeyGenerator`, `AuditBehavior`, `OpenTelemetryBehavior`,
+  `SensitiveJsonRedactor`. Lives in `Pam.Shared.UnitTests` rather than
+  any one module since it's reused everywhere.
 
 **Out of scope** — anything that needs `SaveChangesAsync` to commit to
 a real DB, or that needs the bus to accept a publish. Those graduate
-to integration. `Players`/`Wallet` aggregate behavior beyond `.Create`
-lands with the first features.
+to integration. `Players`, `Wallet`, and `Ingest` aggregate behavior
+beyond placeholders lands with the first real features.
 
 **Conventions**
 
@@ -87,18 +93,19 @@ composing, real broker round-trips, real HTTP pipeline.
 - Unique `DataProtection:ApplicationName` per `PamApiFactory` instance
   to isolate DP keys across parallel runs.
 
-**Current coverage**
+**Current coverage** (10 tests across health, auth fence, and outbox
+reconciliation):
 
-| Test | Verifies |
+| Area | What's covered |
 |---|---|
-| `LiveProbe_Returns_Healthy` | `GET /health/live` → 200 — host up, route mapped |
-| `ReadyProbe_Returns_Healthy_When_Dependencies_Up` | `GET /health/ready` → 200 — SQL + Redis + Rabbit reachable. Uses `HealthCheckService` directly so failures name **which** dependency broke |
-| `CreateBrand_Requires_Authentication` | Anonymous `POST /v1/operators/brands` → 401 — fallback policy intact |
+| Health probes | `LiveProbe_Returns_Healthy` (`GET /health/live`), `ReadyProbe_Returns_Healthy_When_Dependencies_Up` (`GET /health/ready` — resolves `HealthCheckService` directly so failures name **which** dependency broke) |
+| Auth fence | Anonymous `POST /v1/operators/brands` → 401 |
+| Outbox reconciler | Orphan business rows get republished + idempotency (`OutboxReconciliationTests` — see `INGEST.md`) |
 
-**Why just three:** the point of the gate is the **harness**, not
-coverage. Adding tests for any endpoint is mechanical from here. Auth'd
-end-to-end coverage (create → get round-trip) needs a test-only
-bearer-token seam — next integration-test PR.
+The point of the gate is the **harness**, not coverage. Adding tests
+for any endpoint is mechanical from here. Auth'd end-to-end coverage
+(create → get round-trip) needs a test-only bearer-token seam — next
+integration-test PR.
 
 **Conventions**
 
