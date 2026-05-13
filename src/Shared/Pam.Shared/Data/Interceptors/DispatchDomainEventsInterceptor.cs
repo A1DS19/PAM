@@ -13,18 +13,19 @@ public sealed class DispatchDomainEventsInterceptor(IPublisher publisher) : Save
     private const int MaxGenerations = 8;
 
     // Dispatch PRE-save so integration-event publishes that fan out from
-    // domain handlers run inside the active ambient transaction.
-    // MassTransit's bus-wide outbox stages OutboxMessage rows on the
-    // shared PamMessagingDbContext when bridge handlers call
-    // IPublishEndpoint.Publish; AtomicOutboxBehavior (innermost MediatR
-    // behavior) owns the transaction that spans both the business
-    // SaveChanges and the messaging SaveChanges, so business row +
-    // OutboxMessage row commit in a single SQL COMMIT.
+    // domain handlers participate in the same SaveChanges scope as the
+    // aggregate write. MassTransit's bus-wide outbox stages OutboxMessage
+    // rows on the shared PamMessagingDbContext when bridge handlers call
+    // IPublishEndpoint.Publish; OutboxFlushBehavior commits those at the
+    // tail of the command pipeline (a SEPARATE transaction from the
+    // business save — see DECISIONS.md ADR #28 for why, and the
+    // OutboxReconciliationService that closes the under-deliver gap).
     //
-    // Trade-off: handlers see pre-commit state (the aggregate row isn't
-    // visible to other connections yet). If a handler throws, the entire
-    // SaveChanges fails AND the ambient transaction rolls back — atomicity
-    // by design.
+    // Trade-off: handlers see pre-commit state of the business DbContext.
+    // If a handler throws, the business SaveChanges fails — but the
+    // messaging SaveChanges has not run yet, so no outbox row is written
+    // either. Net effect: aggregate write + outbox queue are either both
+    // attempted or both skipped from the producer's side.
     public override async ValueTask<InterceptionResult<int>> SavingChangesAsync(
         DbContextEventData eventData,
         InterceptionResult<int> result,

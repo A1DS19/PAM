@@ -111,28 +111,30 @@ DECISIONS.md ADR #26 for the architectural rationale.
 `SavingChangesAsync` (pre-save on the business DbContext). Bridge
 handlers' `IPublishEndpoint.Publish` calls enrol in the bus-wide
 outbox, writing `OutboxMessage` rows into `PamMessagingDbContext`'s
-change tracker. `AtomicOutboxBehavior` (innermost MediatR pipeline
-behavior, ADR #28) owns a single `IDbContextTransaction` opened on
-`PamMessagingDbContext`; an `AmbientTransactionInterceptor` enrols
-every business DbContext on that same transaction via
-`Database.UseTransactionAsync`, so the business row, the
-`OutboxMessage` row, and the `outbox_dispatched_log` row commit in one
-SQL `COMMIT`. `BusOutboxNotification` then wakes
-`BusOutboxDeliveryService<PamMessagingDbContext>` which forwards to
-RabbitMQ and removes delivered rows. An `OutboxReconciliationService`
-hosted service polls per-module `IOutboxReconciler`s every 5 min as
-the defensive backstop for failure modes the transaction can't cover.
+change tracker; bridge handlers also `Add` an `OutboxDispatchedLog`
+row so the reconciler can detect orphans. `OutboxFlushBehavior`
+(innermost MediatR pipeline behavior) commits both rows together at
+the tail of every command via a single `messaging.SaveChangesAsync`.
+`BusOutboxNotification` wakes
+`BusOutboxDeliveryService<PamMessagingDbContext>`, which forwards to
+RabbitMQ and removes delivered rows. The business `SaveChanges` is a
+SEPARATE transaction from the outbox `SaveChanges`; the
+`OutboxReconciliationService` hosted service is the defensive
+backstop, polling per-module `IOutboxReconciler`s every 5 min and
+republishing business rows whose `outbox_dispatched_log` entry is
+missing. See DECISIONS.md ADR #28.
 
 **Trade-offs locked in.**
 - Domain handlers see pre-commit state. Queries against freshly-written
   rows return nothing — pass data through the event payload instead.
-- A throwing handler rolls back the whole atomic transaction —
-  business + outbox + dispatched-log all roll back together. Atomic by
-  design. Don't put best-effort side effects (logging, metrics) in
+- A throwing handler rolls back the business `SaveChanges`. The outbox
+  `SaveChanges` hasn't fired yet, so the OutboxMessage + dispatched-log
+  rows never land — net effect: aggregate write + outbox queue are
+  either both attempted or both skipped from the producer's side.
+- Sub-millisecond under-deliver window between the two commits is
+  bounded; the reconciler eventually catches anything that slips
+  through. Don't put best-effort side effects (logging, metrics) in
   domain handlers; put them in integration-event consumers.
-- Single `SqlConnection` per command (shared across module +
-  messaging DbContexts). MediatR pipeline is sequential anyway, so
-  no concurrency regression.
 
 ### 5. Concurrent-boot seeder lock — `chore/seeder-advisory-lock`
 

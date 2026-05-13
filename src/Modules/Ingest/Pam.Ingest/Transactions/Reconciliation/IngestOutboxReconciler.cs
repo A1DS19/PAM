@@ -67,7 +67,9 @@ public sealed class IngestOutboxReconciler(
             return 0;
         }
 
-        var candidatePks = candidates.Select(t => t.Id.ToString("N")).ToHashSet(StringComparer.Ordinal);
+        var candidatePks = candidates
+            .Select(t => t.Id.ToString("N"))
+            .ToHashSet(StringComparer.Ordinal);
 
         var coveredPks = await messaging
             .DispatchedLog.AsNoTracking()
@@ -80,9 +82,7 @@ public sealed class IngestOutboxReconciler(
             .ToListAsync(cancellationToken);
 
         var coveredSet = coveredPks.ToHashSet(StringComparer.Ordinal);
-        var orphans = candidates
-            .Where(t => !coveredSet.Contains(t.Id.ToString("N")))
-            .ToList();
+        var orphans = candidates.Where(t => !coveredSet.Contains(t.Id.ToString("N"))).ToList();
 
         if (orphans.Count == 0)
         {

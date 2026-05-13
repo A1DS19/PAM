@@ -14,22 +14,25 @@ the same day, refactored to a shared `PamMessagingDbContext` (schema
 declares in RabbitMQ and the `Flushed N outbox row(s)` debug line
 fires per command.
 
-1. **Cross-context outbox atomicity — SHIPPED.** Path (a) landed:
-   `AtomicOutboxBehavior` (innermost MediatR behavior) opens a shared
-   `IDbContextTransaction` on `PamMessagingDbContext`, stashes it in a
-   scoped `AmbientTransaction` service, and an
-   `AmbientTransactionInterceptor` on every business `DbContext` enrols
-   on the same transaction via `Database.UseTransactionAsync` in
-   `SavingChangesAsync`. One SQL `COMMIT` persists the business row +
-   the `OutboxMessage` row + the `outbox_dispatched_log` row together;
-   crash before commit rolls back everything. The
-   `OutboxReconciliationService` (`IHostedService`, 5-minute interval)
-   is the defensive backstop: each publishing module implements
-   `IOutboxReconciler` and republishes business rows that have no
-   matching `outbox_dispatched_log` entry (e.g.
-   `IngestOutboxReconciler` for Ingest). See DECISIONS.md ADR #28 for
-   the design rationale, why path (b) (MT 9.1 multi-DbContext outbox)
-   stays off the table, and why `TransactionScope` was rejected.
+1. **Cross-context outbox atomicity — partial.** Path (a) was attempted
+   and reverted: opening a shared `IDbContextTransaction` on
+   `PamMessagingDbContext` and enrolling each business `DbContext` via
+   `Database.UseTransactionAsync` in `SavingChangesAsync` fights EF
+   Core's connection model. Handlers that query the DB before calling
+   `SaveChanges` open the context's own connection independently of
+   the ambient transaction, and `UseTransaction` after the fact errors
+   with "transaction is not associated with the current connection".
+   Path (b) — MT 9.1's multi-DbContext outbox — stays off the table per
+   the Apache-2.0 license pin (ADR #5). What landed is the **reconciler
+   backstop**: each module's bridge handler writes an
+   `outbox_dispatched_log` row alongside `IPublishEndpoint.Publish`
+   (both commit together in `OutboxFlushBehavior`'s messaging
+   `SaveChanges`), and `OutboxReconciliationService`
+   (`IHostedService`, 5-min interval) republishes any business row
+   whose dispatched-log entry is missing. Net result: producer-side
+   atomicity at the outbox tier, plus eventual consistency for the
+   business↔outbox seam. See DECISIONS.md ADR #28 for the full
+   trade-off discussion.
 2. **`Pam.Ingest` Phase A — intercept-and-forward.** Five concrete
    sub-tasks, ordered for short-PR delivery; each item is the next
    session's starting point if the one above merges. The column names

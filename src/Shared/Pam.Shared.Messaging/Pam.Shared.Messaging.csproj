@@ -22,7 +22,6 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Pam.Shared.Contracts\Pam.Shared.Contracts.csproj" />
-    <ProjectReference Include="..\Pam.Shared\Pam.Shared.csproj" />
   </ItemGroup>
 
 </Project>

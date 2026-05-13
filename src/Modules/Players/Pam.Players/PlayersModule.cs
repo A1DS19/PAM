@@ -31,8 +31,7 @@ public static class PlayersModule
             {
                 options.AddInterceptors(
                     sp.GetRequiredService<AuditableSaveChangesInterceptor>(),
-                    sp.GetRequiredService<DispatchDomainEventsInterceptor>(),
-                    sp.GetRequiredService<AmbientTransactionInterceptor>()
+                    sp.GetRequiredService<DispatchDomainEventsInterceptor>()
                 );
                 options.UseSqlServer(
                     connectionString,

@@ -453,17 +453,19 @@ before now produces:
   outbox semantic; verify via the log line or the exchange list, not
   a SELECT against the table.
 
-**Atomicity guarantee (shipped in ADR #28).** `AtomicOutboxBehavior`
-opens an `IDbContextTransaction` on `PamMessagingDbContext` at the
-start of every command and the `AmbientTransactionInterceptor` enrols
-`IngestDbContext` on the same transaction in `SavingChangesAsync`. The
-`VendorTransaction` row, the `OutboxMessage` row, and the
-`outbox_dispatched_log` row commit in a single SQL `COMMIT`. Crash
-anywhere before commit rolls back all three. `IngestOutboxReconciler`
-(`IOutboxReconciler` impl, runs under `OutboxReconciliationService`
-every 5 min) republishes any orphan business rows whose dispatched-log
-entry is missing — the defensive backstop for failure modes the
-transaction can't cover.
+**Atomicity caveat (covered by the reconciler).** The
+`VendorTransaction` row commits via `IngestDbContext.SaveChangesAsync`
+inside the handler; the `OutboxMessage` + `outbox_dispatched_log` rows
+commit via `OutboxFlushBehavior`'s `PamMessagingDbContext.SaveChangesAsync`
+at the tail of the pipeline. Two SQL `COMMIT`s, so a crash between
+them leaves the business row persisted with no integration event
+queued. Cross-context single-transaction atomicity was attempted and
+reverted (see ADR #28). The practical risk is closed by
+`IngestOutboxReconciler` (`IOutboxReconciler` impl under
+`OutboxReconciliationService`, 5-min interval): any
+`vendor_transactions` row whose `outbox_dispatched_log` entry is
+missing gets republished through the normal `Publish` +
+`DispatchedLog.Add` path on the next sweep.
 
 ### Smoke test (SOAP envelope, end-to-end)
 

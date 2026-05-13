@@ -492,26 +492,27 @@ Trade-offs you're buying into:
   That's the point — atomic by design. Don't put best-effort side
   effects (logging, metrics) in a domain handler; put them in an
   integration-event consumer.
-- **Single-transaction atomicity guarantee.** `AtomicOutboxBehavior`
-  (innermost MediatR behavior, in `Pam.Shared.Messaging.Behaviors`)
-  opens an `IDbContextTransaction` on `PamMessagingDbContext` at the
-  start of every command. The `AmbientTransactionInterceptor` registered
-  on every business `DbContext` reads from a scoped `AmbientTransaction`
-  service in `SavingChangesAsync` and calls `Database.UseTransactionAsync`
-  so the business context switches to the messaging context's
-  `SqlConnection`. After the handler returns, the behavior flushes
-  messaging and calls `CommitAsync` — one SQL `COMMIT` durably persists
-  the business row, the `OutboxMessage` row, and the
-  `outbox_dispatched_log` row together. Crash anywhere before the commit
-  rolls back the whole request. See `AtomicOutboxBehavior.cs` for the
-  full flow and DECISIONS.md ADR #28.
-- **Reconciler backstop.** The atomic transaction is the primary
-  correctness mechanism; `OutboxReconciliationService`
-  (`IHostedService`, every 5 min by default) is the defensive backstop
-  for hardware faults, network partitions during broker dispatch, or
-  future regressions to the atomicity invariant. Each publishing module
-  implements `IOutboxReconciler` and republishes orphan rows (business
-  row exists, no matching `outbox_dispatched_log` entry).
+- **Atomicity caveat (covered by the reconciler).** The business
+  `SaveChanges` and the outbox `SaveChanges` run in separate
+  transactions. A crash between them leaves the business row committed
+  but the integration event undelivered — sub-millisecond under-deliver
+  window. We tried closing it with a shared `SqlConnection` +
+  `IDbContextTransaction` across the business and messaging DbContexts;
+  it broke when handlers query the DB before calling `SaveChanges` (EF
+  Core opens the context's connection independently of the ambient
+  transaction, then `UseTransaction` fails with "transaction is not
+  associated with the current connection"). MT 8.5's
+  one-DbContext-per-bus constraint also rules out the canonical
+  per-module-outbox fix; MT 9.1's multi-DbContext outbox is off-limits
+  per the Apache-2.0 license pin (ADR #5). See DECISIONS.md ADR #28.
+- **Reconciler closes the practical gap.** Each publishing module's
+  bridge handler writes an `outbox_dispatched_log` row (in the messaging
+  context's change tracker) in the same dispatch path as
+  `IPublishEndpoint.Publish`. The two rows commit together via
+  `OutboxFlushBehavior`'s single `messaging.SaveChangesAsync`, giving
+  *atomicity within the outbox tier*. Business rows whose dispatched-log
+  entry is missing get republished on the next sweep of
+  `OutboxReconciliationService` (`IHostedService`, 5-min default).
 - The `messaging.outbox_message` table is **empty in steady state**
   — that's correct outbox semantics: the delivery service removes
   delivered rows. Use the API log's `Flushed N outbox row(s)` debug

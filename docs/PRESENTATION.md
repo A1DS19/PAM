@@ -191,19 +191,19 @@ OutboxFlushBehavior — tail of command pipeline
                   RabbitMQ exchange
 ```
 
-> What this buys us: once the atomic transaction commits, a crash
-> before broker publish can never lose the event — the row in
+> What this buys us: once the outbox row is committed, a crash before
+> broker publish can never lose the event — the row in
 > `messaging.outbox_message` is the source of truth and the delivery
-> service retries until the broker accepts it. The previously-flagged
-> sub-millisecond under-deliver gap between business and outbox
-> commits is closed (ADR #28): `AtomicOutboxBehavior` opens one
-> `IDbContextTransaction` on `PamMessagingDbContext`, an
-> `AmbientTransactionInterceptor` enrols every business DbContext on
-> the same transaction, and a single `COMMIT` persists business +
-> outbox + dispatched-log together. `OutboxReconciliationService` is
-> the defensive backstop for hardware faults that even the atomic
-> commit can't see. **Non-negotiable for Wallet** — and Wallet inherits
-> the full guarantee on day one from the shared messaging substrate.
+> service retries until the broker accepts it. The business commit
+> and the outbox commit are still separate transactions (ADR #28
+> documents the failed attempt at single-txn atomicity via shared
+> `SqlConnection`/`UseTransaction` — EF Core's connection model
+> fights it). What closes the practical gap is the
+> `OutboxReconciliationService` + per-module `IOutboxReconciler` +
+> `outbox_dispatched_log` table: every published event leaves a log
+> row, and the reconciler republishes any business row whose log
+> entry is missing. **Non-negotiable for Wallet** — the reconciler
+> covers Wallet from day one of the ledger.
 
 ---
 
