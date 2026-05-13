@@ -72,7 +72,17 @@ public sealed class OutboxFlushBehavior<TRequest, TResponse>(
 
         if (messaging.ChangeTracker.HasChanges())
         {
-            var written = await messaging.SaveChangesAsync(cancellationToken);
+            // COMMIT #2 — outbox + dispatched-log. CancellationToken.None
+            // is deliberate: once `next()` returned, COMMIT #1 already
+            // landed the business row, and we MUST flush the outbox to
+            // keep the two tiers consistent. Honouring the request CT
+            // here would manufacture orphans every time a client
+            // disconnects in the microsecond window between #1 and #2
+            // — the reconciler would mop them up, but at the cost of
+            // at-least-once republishes every consumer has to dedupe.
+            // The flush is bounded by the SQL command timeout; it does
+            // not run forever just because the client gave up.
+            var written = await messaging.SaveChangesAsync(CancellationToken.None);
             logger.LogDebug("Flushed {Count} outbox row(s) to messaging.outbox_message", written);
         }
 

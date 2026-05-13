@@ -9,7 +9,7 @@ const sidebars: SidebarsConfig = {
       type: "category",
       label: "Architecture",
       collapsible: false,
-      items: ["ARCHITECTURE", "CORE_PLATFORM_MAPPING"],
+      items: ["ARCHITECTURE", "EVENTS", "CORE_PLATFORM_MAPPING"],
     },
     {
       type: "category",
@@ -21,7 +21,7 @@ const sidebars: SidebarsConfig = {
       type: "category",
       label: "Operations",
       collapsed: false,
-      items: ["LOCAL_DEV", "TESTING"],
+      items: ["LOCAL_DEV", "TESTING", "STRESS"],
     },
     {
       type: "category",

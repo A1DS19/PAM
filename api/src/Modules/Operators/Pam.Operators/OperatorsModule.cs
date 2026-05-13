@@ -2,8 +2,10 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Pam.Operators.Brands.Reconciliation;
 using Pam.Operators.Data;
 using Pam.Shared.Data.Interceptors;
+using Pam.Shared.Messaging.Reconciliation;
 
 namespace Pam.Operators;
 
@@ -50,6 +52,17 @@ public static class OperatorsModule
                 options.UseSnakeCaseNamingConvention();
             }
         );
+
+        // Reconciler backstop. OutboxReconciliationService (registered in
+        // AddPamMassTransit) iterates every IOutboxReconciler every cycle
+        // and asks each module to republish business rows whose
+        // dispatched-log entry is missing. Brand volume is trivial but
+        // the symmetry keeps Operators on the same recoverable pattern
+        // as Ingest — see DECISIONS.md ADR #28.
+        services
+            .AddOptions<OperatorsReconciliationOptions>()
+            .Bind(configuration.GetSection(OperatorsReconciliationOptions.SectionName));
+        services.AddScoped<IOutboxReconciler, OperatorsOutboxReconciler>();
 
         services
             .AddHealthChecks()

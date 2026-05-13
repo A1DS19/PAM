@@ -25,7 +25,10 @@ public sealed class AuditBehavior<TRequest, TResponse>(
     )
     {
         // Commands only — queries are out of scope (DECISIONS.md #22).
-        if (!IsCommand(request))
+        // IUnauditedCommand opts out high-volume commands whose business
+        // row IS the audit trail (ingest.vendor_transactions). Failure
+        // capture for these still lands in LoggingBehavior + OTel.
+        if (!IsCommand(request) || request is IUnauditedCommand)
         {
             return await next();
         }

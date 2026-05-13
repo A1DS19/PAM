@@ -77,6 +77,14 @@ public sealed class VendorTransaction : Aggregate<Guid>
             Description = description,
         };
 
+        // Inline audit stamp — IngestDbContext does NOT register
+        // AuditableSaveChangesInterceptor (see IngestModule), so we set
+        // the columns ourselves. Actor is (Service, vendorId) which is
+        // both faster (no IUserContext lookup per save) and more
+        // accurate than the interceptor's Actor.Anonymous default —
+        // now you can audit-trail back to which vendor wrote the row.
+        tx.Stamp(receivedAt, new Actor(ActorType.Service, vendorId));
+
         tx.RaiseDomainEvent(
             new TransactionIngestedDomainEvent(
                 tx.Id,
@@ -115,7 +123,7 @@ public sealed class VendorTransaction : Aggregate<Guid>
         string? description = null
     )
     {
-        return new VendorTransaction
+        var tx = new VendorTransaction
         {
             Id = id,
             VendorId = vendorId,
@@ -132,11 +140,7 @@ public sealed class VendorTransaction : Aggregate<Guid>
             Description = description,
             RejectedReason = rejectedReason,
         };
+        tx.Stamp(receivedAt, new Actor(ActorType.Service, vendorId));
+        return tx;
     }
-
-    // Audit interceptor stamps the audit columns inherited from Entity<TId>
-    // (Created* / LastModified*). CreatedBy will be Actor.System most of
-    // the time — vendor callbacks are unauthenticated to the PAM JWT
-    // layer; the adapter authenticated the vendor itself.
-    public static Actor SystemActor => Actor.System;
 }

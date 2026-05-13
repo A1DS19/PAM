@@ -27,6 +27,7 @@ public static class MassTransitExtensions
     public static IServiceCollection AddPamMassTransit(
         this IServiceCollection services,
         IConfiguration configuration,
+        Func<Type, bool>? consumerFilter,
         params Assembly[] consumerAssemblies
     )
     {
@@ -48,9 +49,7 @@ public static class MassTransitExtensions
                             "__EFMigrationsHistory",
                             PamMessagingDbContext.Schema
                         );
-                        sql.MigrationsAssembly(
-                            typeof(PamMessagingDbContext).Assembly.FullName
-                        );
+                        sql.MigrationsAssembly(typeof(PamMessagingDbContext).Assembly.FullName);
                     }
                 );
                 options.UseSnakeCaseNamingConvention();
@@ -62,10 +61,7 @@ public static class MassTransitExtensions
         // during the handler's SaveChanges. Registered AFTER AddPamMediatR
         // (which Program.cs always calls first) so it sits innermost in
         // the MediatR pipeline, closest to the handler.
-        services.AddTransient(
-            typeof(IPipelineBehavior<,>),
-            typeof(OutboxFlushBehavior<,>)
-        );
+        services.AddTransient(typeof(IPipelineBehavior<,>), typeof(OutboxFlushBehavior<,>));
 
         // Reconciler backstop. Each module that publishes integration
         // events registers an IOutboxReconciler in its AddXModule.
@@ -85,7 +81,19 @@ public static class MassTransitExtensions
 
             if (consumerAssemblies.Length > 0)
             {
-                x.AddConsumers(consumerAssemblies);
+                if (consumerFilter is null)
+                {
+                    x.AddConsumers(consumerAssemblies);
+                }
+                else
+                {
+                    // MT applies the filter at registration time — types
+                    // returning false are not registered at all, so no
+                    // receive endpoint or queue gets declared for them.
+                    // This is how stress-only discard consumers stay out
+                    // of dev/prod wire-up.
+                    x.AddConsumers(consumerFilter, consumerAssemblies);
+                }
             }
 
             // Single bus-wide outbox registration on the shared messaging
@@ -102,7 +110,24 @@ public static class MassTransitExtensions
             x.AddEntityFrameworkOutbox<PamMessagingDbContext>(o =>
             {
                 o.UseSqlServer();
-                o.UseBusOutbox();
+                o.UseBusOutbox(bo =>
+                {
+                    // MessageDeliveryLimit caps the rows the delivery
+                    // service pulls per iteration. Default is 100, which
+                    // tops out around 600-700 msg/sec on local hardware
+                    // — fine for current dev load, but observed in
+                    // stress runs to be the drain-rate ceiling once
+                    // foreground publish rate matches it. 1000/batch
+                    // gives ~5-10x headroom for sustained-burst drain
+                    // without changing the steady-state cost.
+                    bo.MessageDeliveryLimit = 1000;
+
+                    // Per-batch wall-clock budget for the publish loop.
+                    // Larger batch needs proportionally more time to
+                    // round-trip through Rabbit; 30s is generous enough
+                    // that even a slow broker doesn't time out mid-batch.
+                    bo.MessageDeliveryTimeout = TimeSpan.FromSeconds(30);
+                });
 
                 // QueryDelay is the IDLE poll cadence — when there's
                 // nothing to deliver. Active sends are woken immediately
@@ -119,9 +144,7 @@ public static class MassTransitExtensions
                     var section = configuration.GetSection("MessageBroker");
                     var host =
                         section["Host"]
-                        ?? throw new InvalidOperationException(
-                            "MessageBroker:Host is required"
-                        );
+                        ?? throw new InvalidOperationException("MessageBroker:Host is required");
                     var vhost = section["VirtualHost"] ?? "/";
 
                     // Port is optional — local dev uses RabbitMQ's default 5672

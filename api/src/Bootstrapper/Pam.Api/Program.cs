@@ -65,8 +65,22 @@ builder.Services.AddPamMediatR(moduleAssemblies);
 // Pam.Shared.Messaging. Single .UseBusOutbox() call inside this method —
 // no per-module ConfigureOutbox hooks. See docs/DECISIONS.md ADR on the
 // outbox topology.
+//
+// Stress:DiscardConsumers:Enabled gates the no-op stress consumers in
+// Pam.Notifications.Stress. Off everywhere except ASPNETCORE_ENVIRONMENT=
+// Stress, so production never binds a queue to a discard sink.
+var stressDiscardConsumersEnabled = builder.Configuration.GetValue(
+    "Stress:DiscardConsumers:Enabled",
+    false
+);
+Func<Type, bool>? consumerFilter = stressDiscardConsumersEnabled
+    ? null
+    : t =>
+        !string.Equals(t.Namespace, "Pam.Notifications.Stress", StringComparison.Ordinal)
+        && t.Namespace?.StartsWith("Pam.Notifications.Stress.", StringComparison.Ordinal) != true;
 builder.Services.AddPamMassTransit(
     builder.Configuration,
+    consumerFilter,
     typeof(NotificationsModule).Assembly
 );
 
@@ -105,6 +119,21 @@ builder
     .Services.AddDataProtection()
     .SetApplicationName(dataProtectionApplicationName)
     .PersistKeysToDbContext<IdentityDbContext>();
+
+// Vendors and back-office clients alike speak enum names on the wire,
+// not ordinals. The response side already stringifies (e.g.
+// `result.Status.ToString()` in TwentyOneGAdapter.FormatResponseAsync),
+// so the request side must accept strings too — otherwise a payload
+// like `"kind": "Risk"` (what a real vendor sends) deserializes to a
+// JsonException before the handler runs. JsonStringEnumConverter
+// handles both directions. Affects HttpRequest.ReadFromJsonAsync and
+// minimal-API body binding.
+builder.Services.ConfigureHttpJsonOptions(o =>
+{
+    o.SerializerOptions.Converters.Add(
+        new System.Text.Json.Serialization.JsonStringEnumConverter()
+    );
+});
 
 builder.Services.AddCarter(new DependencyContextAssemblyCatalog(moduleAssemblies));
 
@@ -212,6 +241,13 @@ var redis = await ConnectionMultiplexer.ConnectAsync(redisOptions);
 builder.Services.AddSingleton<IConnectionMultiplexer>(redis);
 builder.Services.AddPamCaching();
 
+// Rate limiting can be globally disabled via RateLimiting:Enabled=false.
+// Stress runs flip this so we measure the system, not our own limiter.
+// Policies are still registered (the .RequireRateLimiting chain on
+// endpoints must resolve to a valid policy) — they just become no-op
+// partitions when the flag is off.
+var rateLimitingEnabled = builder.Configuration.GetValue("RateLimiting:Enabled", true);
+
 builder.Services.AddRateLimiter(o =>
 {
     o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
@@ -249,29 +285,33 @@ builder.Services.AddRateLimiter(o =>
     o.AddPolicy(
         "auth-sensitive",
         ctx =>
-            RedisRateLimitPartition.GetFixedWindowRateLimiter(
-                ClientPartitionKey(ctx),
-                _ => new RedisFixedWindowRateLimiterOptions
-                {
-                    ConnectionMultiplexerFactory = () => redis,
-                    Window = TimeSpan.FromMinutes(1),
-                    PermitLimit = 5,
-                }
-            )
+            rateLimitingEnabled
+                ? RedisRateLimitPartition.GetFixedWindowRateLimiter(
+                    ClientPartitionKey(ctx),
+                    _ => new RedisFixedWindowRateLimiterOptions
+                    {
+                        ConnectionMultiplexerFactory = () => redis,
+                        Window = TimeSpan.FromMinutes(1),
+                        PermitLimit = 5,
+                    }
+                )
+                : RateLimitPartition.GetNoLimiter<string>("disabled")
     );
 
     o.AddPolicy(
         "api-default",
         ctx =>
-            RedisRateLimitPartition.GetSlidingWindowRateLimiter(
-                ClientPartitionKey(ctx),
-                _ => new RedisSlidingWindowRateLimiterOptions
-                {
-                    ConnectionMultiplexerFactory = () => redis,
-                    Window = TimeSpan.FromSeconds(30),
-                    PermitLimit = 100,
-                }
-            )
+            rateLimitingEnabled
+                ? RedisRateLimitPartition.GetSlidingWindowRateLimiter(
+                    ClientPartitionKey(ctx),
+                    _ => new RedisSlidingWindowRateLimiterOptions
+                    {
+                        ConnectionMultiplexerFactory = () => redis,
+                        Window = TimeSpan.FromSeconds(30),
+                        PermitLimit = 100,
+                    }
+                )
+                : RateLimitPartition.GetNoLimiter<string>("disabled")
     );
 
     o.OnRejected = async (context, cancellationToken) =>
@@ -325,7 +365,6 @@ builder
         t.AddAspNetCoreInstrumentation()
             .AddHttpClientInstrumentation()
             .AddEntityFrameworkCoreInstrumentation()
-            
             .AddSource("MassTransit")
             .AddSource("Pam.*")
             .AddOtlpExporter()

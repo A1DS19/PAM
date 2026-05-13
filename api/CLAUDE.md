@@ -246,6 +246,16 @@ Queries (`IQuery<T>`) are NOT audited — only commands.
 If a new command carries fields that need redaction (passwords, tokens,
 PII), add the field name to `SensitiveJsonRedactor`'s allowlist.
 
+**High-volume commands opt out via `IUnauditedCommand`.** When a command
+runs at vendor-ingest volume (millions/day) AND its business row already
+carries the same actor / payload / timing / status, marker-interface it
+with `IUnauditedCommand` so `AuditBehavior` short-circuits.
+`IngestTransactionCommand` is the canonical example —
+`ingest.vendor_transactions` is the audit trail; a 1:1 audit row would
+bloat storage with no new investigative value. Failures still land in
+`LoggingBehavior` (Seq) and `OpenTelemetryBehavior`, so the failure
+trail is intact.
+
 ---
 
 ## ID generation

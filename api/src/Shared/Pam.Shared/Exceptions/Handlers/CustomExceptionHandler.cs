@@ -21,6 +21,23 @@ public sealed class CustomExceptionHandler(ILogger<CustomExceptionHandler> logge
         CancellationToken cancellationToken
     )
     {
+        // Client disconnect: the request CancellationToken fired because
+        // the caller hung up. Not a server-side failure, and we usually
+        // can't write a response anyway — the response stream is already
+        // gone. Log at debug, mark the connection 499 (nginx convention
+        // for "client closed request"), and skip the WriteAsJsonAsync.
+        // Without this guard, every k6 ramp-down / client timeout pollutes
+        // the error log with stack traces and inflates the 5xx rate.
+        if (IsClientCancellation(httpContext, exception))
+        {
+            logger.LogDebug("Request aborted by client: {Path}", httpContext.Request.Path);
+            if (!httpContext.Response.HasStarted)
+            {
+                httpContext.Response.StatusCode = 499;
+            }
+            return true;
+        }
+
         var (status, problem) = exception switch
         {
             // Module-specific domain failures all flow through here —
@@ -177,5 +194,45 @@ public sealed class CustomExceptionHandler(ILogger<CustomExceptionHandler> logge
                 Detail = "An unexpected error occurred.",
             }
         );
+    }
+
+    // A client cancellation manifests in three flavours:
+    //   1. OperationCanceledException / TaskCanceledException directly.
+    //   2. DbUpdateException with a SqlException inner whose .Number = 0
+    //      and message "Operation cancelled by user." — that's what SQL
+    //      Server raises when EF cancels the in-flight command.
+    //   3. Either of the above with HttpContext.RequestAborted already
+    //      signalled.
+    // Any of these means "the client gave up", not "the server broke".
+    private static bool IsClientCancellation(HttpContext httpContext, Exception exception)
+    {
+        if (exception is OperationCanceledException)
+        {
+            return true;
+        }
+
+        if (httpContext.RequestAborted.IsCancellationRequested)
+        {
+            // Walk the inner-exception chain — EF wraps SQL cancellation
+            // in DbUpdateException, sometimes nested.
+            for (var e = exception; e is not null; e = e.InnerException)
+            {
+                if (e is OperationCanceledException)
+                {
+                    return true;
+                }
+                if (
+                    e.Message.Contains(
+                        "Operation cancelled by user",
+                        StringComparison.OrdinalIgnoreCase
+                    )
+                )
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 }

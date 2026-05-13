@@ -23,6 +23,8 @@ public sealed class AuditBehaviorTests
 
     public sealed record GetThingQuery(Guid Id) : IQuery<int>;
 
+    public sealed record HighVolumeCommand(string Vendor) : ICommand<int>, IUnauditedCommand;
+
 
     [Fact]
     public async Task Command_success_writes_success_row_with_redacted_payload()
@@ -75,6 +77,38 @@ public sealed class AuditBehaviorTests
         captured!.Status.Should().Be(AuditStatus.Failure);
         captured.ErrorType.Should().Be(typeof(InvalidOperationException).FullName);
         captured.ErrorMessage.Should().Be("nope");
+    }
+
+    [Fact]
+    public async Task Unaudited_command_bypasses_the_audit_service()
+    {
+        var (audit, sut) = CreateSut<HighVolumeCommand, int>();
+
+        var response = await sut.Handle(
+            new HighVolumeCommand("21g"),
+            () => Task.FromResult(42),
+            CancellationToken.None
+        );
+
+        response.Should().Be(42);
+        await audit.DidNotReceive().RecordAsync(Arg.Any<AuditEntry>(), Arg.Any<CancellationToken>());
+    }
+
+    [Fact]
+    public async Task Unaudited_command_failure_still_bypasses_audit()
+    {
+        var (audit, sut) = CreateSut<HighVolumeCommand, int>();
+        var boom = new InvalidOperationException("nope");
+
+        var act = async () =>
+            await sut.Handle(
+                new HighVolumeCommand("21g"),
+                () => throw boom,
+                CancellationToken.None
+            );
+
+        await act.Should().ThrowAsync<InvalidOperationException>();
+        await audit.DidNotReceive().RecordAsync(Arg.Any<AuditEntry>(), Arg.Any<CancellationToken>());
     }
 
     [Fact]

@@ -11,6 +11,12 @@ namespace Pam.Ingest.Transactions.Features.Ingest;
 // AmountCents semantics: signed. Risk (debit) = negative; Win (credit)
 // = positive. The handler does NOT flip the sign based on Kind — the
 // adapter must produce the correct signed value.
+//
+// IUnauditedCommand: skips AuditBehavior. ingest.vendor_transactions is
+// the audit trail for this command — actor, payload, timing, and status
+// all live on the business row. Writing a 1:1 audit.command_log row at
+// vendor-ingest volume (millions/day) bloats audit storage with no new
+// information. Failures still land in LoggingBehavior + OTel.
 public sealed record IngestTransactionCommand(
     string VendorId,
     string VendorReference,
@@ -22,7 +28,7 @@ public sealed record IngestTransactionCommand(
     DateTimeOffset OccurredAt,
     string? RoundId = null,
     string? Description = null
-) : ICommand<IngestTransactionResult>;
+) : ICommand<IngestTransactionResult>, IUnauditedCommand;
 
 // Returned to the adapter so it can craft the vendor-shaped response.
 // The vendor wants to know: "did you accept this?" + a stable id it can

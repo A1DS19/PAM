@@ -1,8 +1,6 @@
 using System.Reflection;
 using FluentAssertions;
-using NetArchTest.Rules;
 using Xunit;
-using ArchTestResult = NetArchTest.Rules.TestResult;
 
 namespace Pam.ArchitectureTests;
 
@@ -15,6 +13,11 @@ namespace Pam.ArchitectureTests;
 // its own service later: same interface, different transport. If this
 // gate fails, you've created the kind of cross-module coupling that
 // makes that extraction expensive instead of mechanical.
+//
+// Assembly-level check (not namespace-prefix): we look at the loaded
+// assembly's compile-time references, so `Pam.Operators.Contracts` is
+// distinct from `Pam.Operators` — the test mirrors the actual rule
+// instead of approximating it via type-name substrings.
 public sealed class ModuleBoundaryTests
 {
     private static readonly Assembly OperatorsAssembly =
@@ -25,73 +28,53 @@ public sealed class ModuleBoundaryTests
         typeof(Pam.Notifications.NotificationsModule).Assembly;
 
     [Fact]
-    public void Operators_Does_Not_Depend_On_Identity_Internals()
-    {
-        var result = Types
-            .InAssembly(OperatorsAssembly)
-            .ShouldNot()
-            .HaveDependencyOn("Pam.Identity")
-            .GetResult();
+    public void Operators_Does_Not_Depend_On_Identity_Internals() =>
+        AssertNoInternalDependency(OperatorsAssembly, "Pam.Identity");
 
-        result
-            .IsSuccessful.Should()
-            .BeTrue(
-                "Pam.Operators may only reach into Pam.Identity.Contracts, not Pam.Identity. "
-                    + "Failing types: {0}",
-                FormatFailingTypes(result)
+    [Fact]
+    public void Operators_Does_Not_Depend_On_Notifications_Internals() =>
+        AssertNoInternalDependency(OperatorsAssembly, "Pam.Notifications");
+
+    [Fact]
+    public void Identity_Does_Not_Depend_On_Operators_Internals() =>
+        AssertNoInternalDependency(IdentityAssembly, "Pam.Operators");
+
+    [Fact]
+    public void Notifications_Does_Not_Depend_On_Identity_Internals() =>
+        AssertNoInternalDependency(NotificationsAssembly, "Pam.Identity");
+
+    [Fact]
+    public void Notifications_Does_Not_Depend_On_Operators_Internals() =>
+        AssertNoInternalDependency(NotificationsAssembly, "Pam.Operators");
+
+    private static void AssertNoInternalDependency(Assembly source, string forbiddenModule)
+    {
+        // Allow Pam.<X>.Contracts; forbid Pam.<X> (and any nested non-
+        // Contracts internals). The rule is assembly-name equality on
+        // the simple name — namespace prefixes are not the same thing.
+        var offender = source
+            .GetReferencedAssemblies()
+            .Select(a => a.Name)
+            .FirstOrDefault(name =>
+                name is not null
+                && (
+                    string.Equals(name, forbiddenModule, StringComparison.Ordinal)
+                    || (
+                        name.StartsWith(forbiddenModule + ".", StringComparison.Ordinal)
+                        && !name.StartsWith(
+                            forbiddenModule + ".Contracts",
+                            StringComparison.Ordinal
+                        )
+                    )
+                )
+            );
+
+        offender.Should()
+            .BeNull(
+                "{0} may only reference {1}.Contracts, not {1} internals. Offending reference: {2}",
+                source.GetName().Name,
+                forbiddenModule,
+                offender ?? "(none)"
             );
     }
-
-    [Fact]
-    public void Operators_Does_Not_Depend_On_Notifications_Internals()
-    {
-        var result = Types
-            .InAssembly(OperatorsAssembly)
-            .ShouldNot()
-            .HaveDependencyOn("Pam.Notifications")
-            .GetResult();
-
-        result.IsSuccessful.Should().BeTrue(FormatFailingTypes(result));
-    }
-
-    [Fact]
-    public void Identity_Does_Not_Depend_On_Operators_Internals()
-    {
-        var result = Types
-            .InAssembly(IdentityAssembly)
-            .ShouldNot()
-            .HaveDependencyOn("Pam.Operators")
-            .GetResult();
-
-        result.IsSuccessful.Should().BeTrue(FormatFailingTypes(result));
-    }
-
-    [Fact]
-    public void Notifications_Does_Not_Depend_On_Identity_Internals()
-    {
-        var result = Types
-            .InAssembly(NotificationsAssembly)
-            .ShouldNot()
-            .HaveDependencyOn("Pam.Identity")
-            .GetResult();
-
-        result.IsSuccessful.Should().BeTrue(FormatFailingTypes(result));
-    }
-
-    [Fact]
-    public void Notifications_Does_Not_Depend_On_Operators_Internals()
-    {
-        var result = Types
-            .InAssembly(NotificationsAssembly)
-            .ShouldNot()
-            .HaveDependencyOn("Pam.Operators")
-            .GetResult();
-
-        result.IsSuccessful.Should().BeTrue(FormatFailingTypes(result));
-    }
-
-    private static string FormatFailingTypes(ArchTestResult result) =>
-        result.FailingTypeNames is null or { Count: 0 }
-            ? "(no failing types reported)"
-            : string.Join(", ", result.FailingTypeNames);
 }

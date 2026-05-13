@@ -224,7 +224,13 @@ public static class IdentityModule
                 // Rotation strategy: keep the previous cert in
                 // OpenIddict:Validation:IssuerSigningKeys for one release so
                 // tokens issued before rotation still validate. Then drop it.
-                if (environment.IsDevelopment())
+                // Stress is treated as dev-like for cert purposes: no real
+                // users authenticate during a stress run, the endpoints
+                // under test are AllowAnonymous, but OpenIddict still
+                // needs the server to start cleanly. Self-signed dev
+                // certs are correct here — no token actually leaves
+                // localhost.
+                if (environment.IsDevelopment() || environment.IsEnvironment("Stress"))
                 {
                     options
                         .AddDevelopmentEncryptionCertificate()
@@ -240,11 +246,7 @@ public static class IdentityModule
                         )
                     );
                     options.AddSigningCertificate(
-                        LoadCertificate(
-                            configuration,
-                            "OpenIddict:SigningCertificate",
-                            "signing"
-                        )
+                        LoadCertificate(configuration, "OpenIddict:SigningCertificate", "signing")
                     );
                 }
 
@@ -309,7 +311,11 @@ public static class IdentityModule
 
         services
             .AddHealthChecks()
-            .AddSqlServer(connectionString, name: "identity-db", tags: ["ready", "module:identity"]);
+            .AddSqlServer(
+                connectionString,
+                name: "identity-db",
+                tags: ["ready", "module:identity"]
+            );
 
         return services;
     }

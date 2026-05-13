@@ -9,6 +9,98 @@ Rough ADR shape, kept terse. Order is reverse-chronological.
 
 ---
 
+## 29. Outbox reconciler scans via SQL `LEFT JOIN`, not in-memory diff — 2026-05-13
+
+**Context.** ADR #28 introduced `IOutboxReconciler` as the backstop for
+the business↔messaging two-commit gap. The first implementation
+(`IngestOutboxReconciler`) used a paginated keyset scan over
+`vendor_transactions` and diffed in-memory against
+`outbox_dispatched_log`:
+
+```
+for batch in 1..MaxScanBatchesPerCycle:
+    candidates = SELECT TOP ScanBatchSize FROM vendor_transactions
+                 WHERE received_at IN (lookback, threshold)
+                 AND status <> 'Rejected'
+                 ORDER BY received_at, id
+    covered = SELECT business_pk FROM dispatched_log WHERE pk IN candidates
+    orphans = candidates - covered
+    republish(orphans)
+```
+
+Two problems caught by the first stress run:
+
+1. The keyset cursor was **local** to `ScanAndRepublishAsync`, reset
+   every cycle. Each cycle started from the OLDEST row in the window
+   and stopped after `ScanBatchSize * MaxScanBatchesPerCycle` rows
+   (40k with default settings). With 147k rows in a fresh stress run's
+   2-day window, the reconciler permanently re-scanned the same first
+   40k rows. **Orphans past row 40k were invisible** no matter how
+   many cycles ran. A 70-min-old orphan that should have been swept
+   65× had never been touched.
+2. The per-row diff cost was paid even for rows that already had a
+   `dispatched_log` entry. At healthy operation, 99.99% of rows in the
+   window are covered — the in-memory filter eliminates them after the
+   read, but the read still happened.
+
+**Decision.** Move the orphan filter into the SQL query itself with a
+`LEFT JOIN` against `messaging.outbox_dispatched_log`, returning ONLY
+orphan rows:
+
+```sql
+SELECT TOP (N) t.*
+FROM ingest.vendor_transactions t
+LEFT JOIN messaging.outbox_dispatched_log l
+    ON l.module      = 'Ingest'
+   AND l.event_type  = 'TransactionIngestedIntegrationEvent'
+   AND l.business_pk = LOWER(REPLACE(CONVERT(varchar(36), t.id), '-', ''))
+WHERE t.received_at > @lookback
+  AND t.received_at < @threshold
+  AND t.status <> 'Rejected'
+  AND l.business_pk IS NULL
+ORDER BY t.received_at, t.id
+```
+
+Consequences:
+
+- The per-cycle budget (`ScanBatchSize × MaxScanBatchesPerCycle`) now
+  caps the **orphan count** per cycle, not the **scan depth**. At
+  healthy operation the orphan count is near zero, so a single batch
+  per cycle is enough; under incident the budget naturally bounds
+  recovery rate.
+- No cursor state needed across iterations. Each successful republish
+  removes its row from the orphan set, so the next iteration's query
+  returns the next orphan batch.
+- The `CONVERT(varchar(36), t.id)` recomputes the dispatched-log PK
+  shape per row. SQL Server runs an index-served scan on
+  `ix_vendor_transactions_received_at_status` for the outer, then
+  a PK seek into `outbox_dispatched_log` per row. Index-served
+  end-to-end at production scale.
+
+**Cross-DbContext caveat.** EF Core can't generate this query through
+LINQ — `IngestDbContext` and `PamMessagingDbContext` are separate
+contexts even though they share a physical database. The reconciler
+uses `IngestDbContext.Database.SqlQuery<OrphanRow>(...)` against the
+underlying SQL connection, projecting into an unmapped positional
+record. Same trick works for `OperatorsOutboxReconciler` against
+`operators.brands`.
+
+**Why not LINQ across contexts.** Considered registering one context's
+entities into the other (e.g. expose `DispatchedLog` as a keyless type
+on `IngestDbContext`). Rejected — duplicates the mapping in two places,
+loses the single-source-of-truth invariant for `OutboxDispatchedLogConfiguration`,
+and makes future module-extraction less mechanical.
+
+Pinned by `Reconciler_Republishes_Orphans_Past_Per_Cycle_Row_Budget`
+in `Pam.IntegrationTests`. The test inserts 101 orphans against a
+budget of 100 and asserts all 101 clear within 5 reconciler calls —
+under the old design, the 101st was permanently stuck.
+
+Wired in `IngestOutboxReconciler.ScanAndRepublishAsync` and
+`OperatorsOutboxReconciler.ScanAndRepublishAsync`.
+
+---
+
 ## 28. Outbox atomicity via reconciler backstop, not shared `SqlConnection` — 2026-05-13
 
 **Context.** ADR #26 picked a single shared `PamMessagingDbContext` for the

@@ -1,11 +1,14 @@
 using FluentAssertions;
+using Microsoft.AspNetCore.Hosting;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Pam.Ingest.Contracts.Transactions.IntegrationEvents;
 using Pam.Ingest.Contracts.Transactions.Models;
 using Pam.Ingest.Data;
 using Pam.Ingest.Transactions.EventHandlers;
 using Pam.Ingest.Transactions.Models;
+using Pam.Shared.Contracts.Identity;
 using Pam.Shared.Messaging.Data;
 using Pam.Shared.Messaging.Reconciliation;
 using Xunit;
@@ -199,5 +202,118 @@ public sealed class OutboxReconciliationTests(PamContainersFixture containers)
         // Keep the unused 'before' value referenced so the variable is
         // obviously part of the test's intent rather than dead code.
         _ = republishedBefore;
+    }
+
+    [Fact]
+    public async Task Reconciler_Republishes_Orphans_Past_Per_Cycle_Row_Budget()
+    {
+        // Regression pin for the bug found 2026-05-13: the previous
+        // cursor-based design re-scanned the same prefix of the lookback
+        // window on every invocation, so any orphan past
+        //   ScanBatchSize * MaxScanBatchesPerCycle
+        // rows was permanently invisible (the local cursor reset every
+        // call). After the SQL-LEFT-JOIN rewrite the per-cycle budget
+        // caps the ORPHAN count per call, not the total scan depth — so
+        // every orphan converges in ⌈n/budget⌉ calls.
+        //
+        // Test shape: tight budget of 100 rows per cycle, 101 orphans.
+        // Old code: call 1 republishes 100, call 2 returns 0 → 1 orphan
+        // permanently stuck. New code: call 1 republishes 100, call 2
+        // republishes 1 → all clear.
+        var ct = TestContext.Current.CancellationToken;
+        // Inner held for disposal so the analyzer sees a clean ownership
+        // chain (CA2000); WithWebHostBuilder returns a wrapping factory
+        // that we dispose first.
+        await using var inner = new PamApiFactory(containers);
+        await using var factory = inner.WithWebHostBuilder(b =>
+            b.ConfigureAppConfiguration(
+                (_, config) =>
+                    config.AddInMemoryCollection(
+                        new Dictionary<string, string?>(StringComparer.Ordinal)
+                        {
+                            // ScanBatchSize is clamped to >= 100 inside
+                            // the reconciler; 100 is the smallest budget
+                            // we can pin in a regression test.
+                            ["Ingest:Reconciliation:ScanBatchSize"] = "100",
+                            ["Ingest:Reconciliation:MaxScanBatchesPerCycle"] = "1",
+                        }
+                    )
+            )
+        );
+        _ = factory.CreateClient();
+
+        using var scope = factory.Services.CreateScope();
+        var sp = scope.ServiceProvider;
+        var ingest = sp.GetRequiredService<IngestDbContext>();
+        var messaging = sp.GetRequiredService<PamMessagingDbContext>();
+        var reconciler = sp
+            .GetServices<IOutboxReconciler>()
+            .Single(r =>
+                string.Equals(
+                    r.ModuleName,
+                    TransactionIngestedDomainHandler.ModuleName,
+                    StringComparison.Ordinal
+                )
+            );
+
+        // Insert 101 orphans (1 past the per-cycle budget). UUIDv7 keeps
+        // them time-ordered so the reconciler's ORDER BY received_at, id
+        // pulls them out in a deterministic, contiguous slice.
+        var receivedAt = DateTimeOffset.UtcNow.AddSeconds(-30);
+        var orphanIds = Enumerable.Range(0, 101).Select(_ => PamIds.New()).ToArray();
+        foreach (var id in orphanIds)
+        {
+            var tx = VendorTransaction.Record(
+                id: id,
+                vendorId: "21g",
+                vendorReference: $"budget-{id:N}",
+                brandId: Guid.NewGuid(),
+                playerId: Guid.NewGuid(),
+                amountCents: -100L,
+                currency: "EUR",
+                kind: TransactionKind.Risk,
+                occurredAt: receivedAt,
+                receivedAt: receivedAt
+            );
+            tx.ClearDomainEvents();
+            ingest.VendorTransactions.Add(tx);
+        }
+        await ingest.SaveChangesAsync(ct);
+
+        // Run until convergence; cap at a small attempt count so a
+        // regression fails fast rather than running forever.
+        var ourCovered = 0;
+        var ourPks = orphanIds.Select(id => id.ToString("N")).ToHashSet(StringComparer.Ordinal);
+        for (var attempt = 0; attempt < 5; attempt++)
+        {
+            await reconciler.ScanAndRepublishAsync(
+                minAge: TimeSpan.Zero,
+                lookbackWindow: TimeSpan.FromDays(1),
+                ct
+            );
+
+            ourCovered = await messaging
+                .DispatchedLog.AsNoTracking()
+                .CountAsync(
+                    l =>
+                        l.Module == TransactionIngestedDomainHandler.ModuleName
+                        && l.EventType == nameof(TransactionIngestedIntegrationEvent)
+                        && ourPks.Contains(l.BusinessPk),
+                    ct
+                );
+
+            if (ourCovered == 101)
+            {
+                break;
+            }
+        }
+
+        ourCovered
+            .Should()
+            .Be(
+                101,
+                "every orphan must receive a dispatched-log row, even those past the "
+                    + "per-cycle scan budget of 100 — that was the bug"
+            );
     }
 }

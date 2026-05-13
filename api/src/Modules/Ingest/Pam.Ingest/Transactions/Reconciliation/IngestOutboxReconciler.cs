@@ -15,19 +15,16 @@ namespace Pam.Ingest.Transactions.Reconciliation;
 // Defensive backstop for the Ingest two-commit publish path. Finds
 // vendor_transactions rows whose TransactionIngestedIntegrationEvent never
 // produced an outbox_dispatched_log entry, and republishes them through
-// the normal Publish + DispatchedLog.Add + SaveChanges path.
+// the normal Publish + DispatchedLog.Add + SaveChanges path. See ADR #28
+// for why two commits exist and what gap this closes.
 //
-// What this catches that OutboxFlushBehavior cannot:
-//   - Crashes between business COMMIT #1 (IngestDbContext) and messaging
-//     COMMIT #2 (PamMessagingDbContext via OutboxFlushBehavior). See ADR #28
-//     for why those are not a single transaction.
-//   - Code paths that write a VendorTransaction outside the MediatR pipeline
-//     (e.g. tooling, future bulk-import jobs, or a regression that bypasses
-//     the bridge handler).
-//   - Hardware faults or network partitions that prevent dispatch.
-//
-// At-least-once delivery; consumers must dedupe via MT's
-// UseEntityFrameworkOutbox(context) inbox.
+// Scan shape: a SQL LEFT JOIN against messaging.outbox_dispatched_log,
+// returning ONLY orphan rows. The per-cycle row budget (ScanBatchSize *
+// MaxScanBatchesPerCycle) therefore bounds the ORPHAN count, not the
+// total scan depth. The old in-memory diff was bounded by total rows in
+// the window — once a stress-test backlog grew past ~40k rows, orphans
+// past the budget became permanently invisible because the cursor reset
+// every cycle (caught 2026-05-13).
 public sealed class IngestOutboxReconciler(
     IngestDbContext business,
     PamMessagingDbContext messaging,
@@ -37,6 +34,8 @@ public sealed class IngestOutboxReconciler(
     ILogger<IngestOutboxReconciler> logger
 ) : IOutboxReconciler
 {
+    private const string EventType = nameof(TransactionIngestedIntegrationEvent);
+
     public string ModuleName => TransactionIngestedDomainHandler.ModuleName;
 
     public async Task<int> ScanAndRepublishAsync(
@@ -48,18 +47,16 @@ public sealed class IngestOutboxReconciler(
         var now = clock.UtcNow;
         var threshold = now.Subtract(minAge);
         var lookback = now.Subtract(lookbackWindow);
-        var eventType = nameof(TransactionIngestedIntegrationEvent);
         var scanBatchSize = Math.Clamp(options.Value.ScanBatchSize, 100, 10_000);
         var maxBatches = Math.Clamp(options.Value.MaxScanBatchesPerCycle, 1, 500);
+        var moduleName = ModuleName;
         var totalRepublished = 0;
-        // Composite keyset cursor on (ReceivedAt, Id). ReceivedAt alone is
-        // unsafe at multi-thousand TPS: sub-millisecond clock ties at a
-        // batch boundary can permanently skip rows once they age past
-        // lookbackWindow. UUIDv7 is time-ordered, so within a ReceivedAt
-        // tie the Id ordering is also stable.
-        DateTimeOffset? cursorReceivedAt = null;
-        Guid? cursorId = null;
 
+        // Each iteration republishes one batch of orphans. After SaveChanges,
+        // the rows just published now have dispatched_log entries, so the
+        // next query naturally returns the NEXT batch of orphans — no
+        // cursor state needed. Loop terminates when the query returns no
+        // rows OR maxBatches is hit (incident-safety circuit-breaker).
         for (var batch = 0; batch < maxBatches; batch++)
         {
             if (cancellationToken.IsCancellationRequested)
@@ -67,66 +64,50 @@ public sealed class IngestOutboxReconciler(
                 break;
             }
 
-            // Two-step diff. We can't join across DbContexts in LINQ — EF
-            // compiles to SQL per-context. Same physical database, but
-            // different change trackers and connections at the EF layer.
+            // SQL LEFT JOIN: only orphan rows come back. The join key on
+            // l.business_pk computes the dispatched_log primary-key form
+            // of t.id (Guid.ToString("N") = lowercase hex no dashes).
+            // SQL Server's CONVERT on uniqueidentifier returns upper-case
+            // with dashes by default — LOWER+REPLACE produces the matching
+            // shape so the PK seek on (module, event_type, business_pk)
+            // succeeds row-by-row.
             //
-            // Bounded scan: only rows in (lookback, threshold) are
-            // candidates. The supporting index
-            // ix_vendor_transactions_received_at_status keeps each pass
-            // O(window-size) rather than O(table-size) — critical at
-            // millions of rows/day. Rejected rows raise no event by design
-            // (RecordRejected does not call RaiseDomainEvent) — skip them.
-            var candidates = await business
-                .VendorTransactions.AsNoTracking()
-                .Where(t =>
-                    t.ReceivedAt > lookback
-                    && t.ReceivedAt < threshold
-                    && t.Status != TransactionStatus.Rejected
-                    && (
-                        cursorReceivedAt == null
-                        || t.ReceivedAt > cursorReceivedAt
-                        || (t.ReceivedAt == cursorReceivedAt && t.Id > cursorId)
-                    )
+            // ix_vendor_transactions_received_at_status keeps the outer
+            // scan O(window-size) over t. The inner seek into
+            // outbox_dispatched_log is PK-seek-per-row. Plan is index-
+            // served end-to-end at production scale.
+            var orphans = await business
+                .Database.SqlQuery<OrphanRow>(
+                    $@"
+                    SELECT TOP ({scanBatchSize})
+                        t.id,
+                        t.vendor_id,
+                        t.vendor_reference,
+                        t.brand_id,
+                        t.player_id,
+                        t.amount_cents,
+                        t.currency,
+                        t.kind,
+                        t.status,
+                        t.round_id,
+                        t.occurred_at
+                    FROM ingest.vendor_transactions t
+                    LEFT JOIN messaging.outbox_dispatched_log l
+                        ON l.module      = {moduleName}
+                       AND l.event_type  = {EventType}
+                       AND l.business_pk = LOWER(REPLACE(CONVERT(varchar(36), t.id), '-', ''))
+                    WHERE t.received_at > {lookback}
+                      AND t.received_at < {threshold}
+                      AND t.status <> 'Rejected'
+                      AND l.business_pk IS NULL
+                    ORDER BY t.received_at, t.id
+                "
                 )
-                .OrderBy(t => t.ReceivedAt)
-                .ThenBy(t => t.Id)
-                .Take(scanBatchSize)
                 .ToListAsync(cancellationToken);
-
-            if (candidates.Count == 0)
-            {
-                break;
-            }
-
-            var candidatePks = candidates
-                .Select(t => t.Id.ToString("N"))
-                .ToHashSet(StringComparer.Ordinal);
-
-            var coveredPks = await messaging
-                .DispatchedLog.AsNoTracking()
-                .Where(l =>
-                    l.Module == TransactionIngestedDomainHandler.ModuleName
-                    && l.EventType == eventType
-                    && candidatePks.Contains(l.BusinessPk)
-                )
-                .Select(l => l.BusinessPk)
-                .ToListAsync(cancellationToken);
-
-            var coveredSet = coveredPks.ToHashSet(StringComparer.Ordinal);
-            var orphans = candidates.Where(t => !coveredSet.Contains(t.Id.ToString("N"))).ToList();
-
-            var last = candidates[^1];
-            cursorReceivedAt = last.ReceivedAt;
-            cursorId = last.Id;
 
             if (orphans.Count == 0)
             {
-                if (candidates.Count < scanBatchSize)
-                {
-                    break;
-                }
-                continue;
+                break;
             }
 
             foreach (var tx in orphans)
@@ -140,8 +121,8 @@ public sealed class IngestOutboxReconciler(
                         PlayerId: tx.PlayerId,
                         AmountCents: tx.AmountCents,
                         Currency: tx.Currency,
-                        Kind: tx.Kind,
-                        Status: tx.Status,
+                        Kind: Enum.Parse<TransactionKind>(tx.Kind),
+                        Status: Enum.Parse<TransactionStatus>(tx.Status),
                         RoundId: tx.RoundId,
                         TransactionOccurredAt: tx.OccurredAt
                     ),
@@ -151,32 +132,53 @@ public sealed class IngestOutboxReconciler(
                 messaging.DispatchedLog.Add(
                     new OutboxDispatchedLog
                     {
-                        Module = ModuleName,
+                        Module = moduleName,
                         BusinessPk = tx.Id.ToString("N"),
-                        EventType = eventType,
+                        EventType = EventType,
                         DispatchedAt = clock.UtcNow,
                     }
                 );
 
                 logger.LogWarning(
                     "Republished orphan {EventType} for VendorTransaction {TransactionId}",
-                    eventType,
+                    EventType,
                     tx.Id
                 );
             }
 
             // Single commit for the batch. The DispatchedLog rows + the
-            // OutboxMessage rows queued by Publish() commit together so the
-            // next pass won't re-detect these as orphans.
+            // OutboxMessage rows queued by Publish() commit together so
+            // the next iteration's query won't re-detect these as orphans.
             await messaging.SaveChangesAsync(cancellationToken);
             totalRepublished += orphans.Count;
 
-            // Keep cycles bounded even with large historical gaps.
-            if (candidates.Count < scanBatchSize)
+            // Short batch → no more work this cycle; otherwise loop.
+            if (orphans.Count < scanBatchSize)
             {
                 break;
             }
         }
+
         return totalRepublished;
     }
+
+    // Unmapped projection for SqlQuery<T>. EF Core 8+ accepts any type
+    // whose property names match the result column aliases — positional
+    // records work because each parameter becomes a matching init-only
+    // property. Enums round-trip as strings (the DB columns are nvarchar
+    // via HasConversion<string>() in VendorTransactionConfiguration) so
+    // we parse them on materialise.
+    private sealed record OrphanRow(
+        Guid Id,
+        string VendorId,
+        string VendorReference,
+        Guid BrandId,
+        Guid PlayerId,
+        long AmountCents,
+        string Currency,
+        string Kind,
+        string Status,
+        string? RoundId,
+        DateTimeOffset OccurredAt
+    );
 }

@@ -30,14 +30,20 @@ public static class IngestModule
             configuration.GetConnectionString("Pam")
             ?? throw new InvalidOperationException("ConnectionStrings:Pam is not configured");
 
-        services.TryAddScoped<AuditableSaveChangesInterceptor>();
+        // AuditableSaveChangesInterceptor is intentionally NOT attached to
+        // IngestDbContext. Vendor traffic runs at 600+ inserts/sec and the
+        // interceptor's per-save IUserContext.Current lookup (HttpContext
+        // walk + claim resolution) + ChangeTracker.Entries reflection both
+        // showed up as meaningful overhead in stress profiling 2026-05-13.
+        // VendorTransaction.Record/RecordRejected stamp the audit columns
+        // inline with Actor(Service, vendorId) — faster AND more accurate
+        // than the interceptor's Actor.Anonymous fallback.
         services.TryAddScoped<DispatchDomainEventsInterceptor>();
 
         services.AddDbContext<IngestDbContext>(
             (sp, options) =>
             {
                 options.AddInterceptors(
-                    sp.GetRequiredService<AuditableSaveChangesInterceptor>(),
                     sp.GetRequiredService<DispatchDomainEventsInterceptor>()
                 );
                 options.UseSqlServer(

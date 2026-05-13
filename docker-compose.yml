@@ -110,18 +110,18 @@ services:
   # node_modules, .docusaurus/ and build/ are anonymous volumes so the
   # container's regenerated artifacts never collide with the host's
   # (paths inside .docusaurus/ are absolute and would otherwise leak
-  # the host's /home/.../docs-site path into the container's webpack).
+  # the host's /home/.../docs-fe path into the container's webpack).
   # Available at http://localhost:4000 (host) — 3000 is reserved for the SPA.
-  docs-site:
+  docs-fe:
     image: node:22-alpine
     container_name: pam-docs
-    working_dir: /docs-site
+    working_dir: /docs-fe
     command: sh -c "npm install --no-audit --no-fund && npx docusaurus start --host 0.0.0.0 --port 3000"
     volumes:
-      - ./docs-site:/docs-site
-      - pam-docs-node-modules:/docs-site/node_modules
-      - pam-docs-cache:/docs-site/.docusaurus
-      - pam-docs-build:/docs-site/build
+      - ./docs-fe:/docs-fe
+      - pam-docs-node-modules:/docs-fe/node_modules
+      - pam-docs-cache:/docs-fe/.docusaurus
+      - pam-docs-build:/docs-fe/build
     ports:
       - "4000:3000"
 

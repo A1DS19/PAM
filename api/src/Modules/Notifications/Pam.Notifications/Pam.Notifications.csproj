@@ -12,6 +12,8 @@
   <ItemGroup>
     <ProjectReference Include="..\Pam.Notifications.Contracts\Pam.Notifications.Contracts.csproj" />
     <ProjectReference Include="..\..\..\Shared\Pam.Shared.Messaging\Pam.Shared.Messaging.csproj" />
+    <ProjectReference Include="..\..\Ingest\Pam.Ingest.Contracts\Pam.Ingest.Contracts.csproj" />
+    <ProjectReference Include="..\..\Operators\Pam.Operators.Contracts\Pam.Operators.Contracts.csproj" />
   </ItemGroup>
 
   <ItemGroup>
