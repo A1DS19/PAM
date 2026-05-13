@@ -467,6 +467,32 @@ reverted (see ADR #28). The practical risk is closed by
 missing gets republished through the normal `Publish` +
 `DispatchedLog.Add` path on the next sweep.
 
+**Scale at millions of transactions per day.**
+
+- **Reconciler scan** is bounded by
+  `Messaging:Reconciliation:LookbackWindow` (default 2 days) — only
+  rows in `(now - lookback, now - minAge)` are candidates. Served by
+  `ix_vendor_transactions_received_at_status` so each pass is
+  O(window-size), not O(table-size). Incidents older than the
+  lookback fall outside auto-recovery; operators extend the window
+  temporarily during incident response if needed.
+- **`outbox_dispatched_log` retention.** Rows older than
+  `Messaging:Reconciliation:RetentionWindow` (default 3 days, must be
+  ≥ `LookbackWindow + safety`) get batched-deleted by
+  `OutboxReconciliationService`'s cleanup pass each cycle.
+  `DELETE TOP (CleanupBatchSize)` (default 10 000, hard-clamped
+  [1, 50 000]) keeps each batch under SQL Server's lock-escalation
+  threshold and prevents transaction-log blowups.
+  `CleanupMaxBatchesPerCycle` (default 50 → 500 k rows/cycle) caps
+  per-cycle work so a multi-day backlog doesn't starve
+  reconciliation.
+- **`vendor_transactions` partitioning** is the next-phase scale work.
+  The table is regulator-immutable, so the strategy is not delete-by-
+  age but time-based partitioning on `received_at` with sliding-window
+  age-out. Pinned in ROADMAP item 1 as the open follow-up — triggers
+  when Wallet ships or Phase D retires GBS's casino write path,
+  whichever first.
+
 ### Smoke test (SOAP envelope, end-to-end)
 
 ```bash

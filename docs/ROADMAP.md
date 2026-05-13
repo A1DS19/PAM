@@ -29,10 +29,28 @@ fires per command.
    (both commit together in `OutboxFlushBehavior`'s messaging
    `SaveChanges`), and `OutboxReconciliationService`
    (`IHostedService`, 5-min interval) republishes any business row
-   whose dispatched-log entry is missing. Net result: producer-side
+   whose dispatched-log entry is missing. The reconciler scan is
+   bounded by `LookbackWindow` (default 2 days) and served by
+   `ix_vendor_transactions_received_at_status` so each pass is
+   O(window-size) regardless of total table size; a second pass per
+   cycle batched-deletes `outbox_dispatched_log` rows older than
+   `RetentionWindow` (default 3 days). Net result: producer-side
    atomicity at the outbox tier, plus eventual consistency for the
-   business↔outbox seam. See DECISIONS.md ADR #28 for the full
-   trade-off discussion.
+   business↔outbox seam, with bounded scan + bounded retention to
+   sustain millions of transactions per day. See DECISIONS.md ADR #28
+   for the full trade-off discussion.
+
+   **Open follow-up — `vendor_transactions` partitioning.** The
+   business table grows ~30M rows/month at expected ingest volume and
+   is regulator-immutable (can't delete). Plan: time-based partitioning
+   on `received_at` with monthly partitions and a sliding-window
+   age-out via `ALTER PARTITION ... SWITCH`. Old partitions move to a
+   read-only filegroup; archive partitions drop after the regulatory
+   retention period. Triggers when either (a) Wallet's ledger ships
+   and matches Ingest's scale profile, or (b) Phase D of the Ingest
+   strangler retires GBS's casino write path and PAM owns the
+   transaction record for production. Whichever comes first becomes
+   the partitioning PR.
 2. **`Pam.Ingest` Phase A — intercept-and-forward.** Five concrete
    sub-tasks, ordered for short-PR delivery; each item is the next
    session's starting point if the one above merges. The column names

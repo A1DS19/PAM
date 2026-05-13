@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Pam.Shared.Messaging.Data;
 
@@ -11,9 +12,11 @@ using Pam.Shared.Messaging.Data;
 namespace Pam.Shared.Messaging.Data.Migrations
 {
     [DbContext(typeof(PamMessagingDbContext))]
-    partial class PamMessagingDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260513050940_ReshapeDispatchedLogForScale")]
+    partial class ReshapeDispatchedLogForScale
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

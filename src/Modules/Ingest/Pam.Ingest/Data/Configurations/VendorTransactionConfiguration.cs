@@ -65,6 +65,18 @@ public sealed class VendorTransactionConfiguration : IEntityTypeConfiguration<Ve
         // Vendor-scoped queries (reconciliation reports per vendor).
         builder.HasIndex(t => new { t.VendorId, t.OccurredAt }).IsDescending(false, true);
 
+        // Reconciler scan window: `WHERE received_at BETWEEN ? AND ?
+        // AND status != 'Rejected' ORDER BY received_at LIMIT 200`. At
+        // millions of rows/day this index keeps each pass O(window-size)
+        // instead of O(table-size). status is the second key column so
+        // the (received_at, status) seek skips Rejected rows without a
+        // key-lookup. Future scale work: time-based partitioning on
+        // received_at lets old partitions age out to slower storage
+        // without touching this index. See ARCHITECTURE.md.
+        builder
+            .HasIndex(t => new { t.ReceivedAt, t.Status })
+            .HasDatabaseName("ix_vendor_transactions_received_at_status");
+
         // Audit columns inherited from Entity<TId>.
         builder.Property(t => t.CreatedAt).IsRequired();
         builder

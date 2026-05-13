@@ -82,7 +82,14 @@ public sealed class OutboxReconciliationTests(PamContainersFixture containers)
         );
         preLog.Should().BeNull("the orphan was inserted outside the bridge-handler path");
 
-        var republished = await reconciler.ScanAndRepublishAsync(TimeSpan.Zero, ct);
+        // Lookback set generously so the test orphans (received_at
+        // ~10 minutes ago) fall inside the scan window regardless of
+        // how long the container fixture has been alive.
+        var republished = await reconciler.ScanAndRepublishAsync(
+            minAge: TimeSpan.Zero,
+            lookbackWindow: TimeSpan.FromDays(1),
+            ct
+        );
 
         // Other tests in the same shared container fixture may have left
         // their own orphans behind, so assert "at least one" rather than
@@ -152,13 +159,21 @@ public sealed class OutboxReconciliationTests(PamContainersFixture containers)
         );
         await messaging.SaveChangesAsync(ct);
 
-        var republishedBefore = await reconciler.ScanAndRepublishAsync(TimeSpan.Zero, ct);
+        var republishedBefore = await reconciler.ScanAndRepublishAsync(
+            minAge: TimeSpan.Zero,
+            lookbackWindow: TimeSpan.FromDays(1),
+            ct
+        );
         var coveredPk = coveredId.ToString("N");
 
         // After a first sweep, every prior orphan is covered. A second
         // sweep must republish nothing — the covered row stays covered,
         // and there's no double-publish.
-        var republishedAfter = await reconciler.ScanAndRepublishAsync(TimeSpan.Zero, ct);
+        var republishedAfter = await reconciler.ScanAndRepublishAsync(
+            minAge: TimeSpan.Zero,
+            lookbackWindow: TimeSpan.FromDays(1),
+            ct
+        );
 
         republishedAfter
             .Should()

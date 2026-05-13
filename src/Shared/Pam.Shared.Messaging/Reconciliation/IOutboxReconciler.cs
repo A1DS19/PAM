@@ -18,11 +18,22 @@ public interface IOutboxReconciler
 {
     string ModuleName { get; }
 
-    // Scans for business rows whose dispatched-log entry is missing AND
-    // whose business row is older than minAge. Returns the number of
-    // events republished. The age threshold gives the normal command path
-    // a grace window to commit before the reconciler intervenes — without
-    // it, a row that just landed but whose outbox commit is in flight
-    // would race the reconciler.
-    Task<int> ScanAndRepublishAsync(TimeSpan minAge, CancellationToken cancellationToken);
+    // Scans business rows in the window
+    //   (now - lookbackWindow) < received_at < (now - minAge)
+    // for entries whose outbox_dispatched_log row is missing, and
+    // republishes them. Returns the number of events republished.
+    //
+    // - minAge gives the normal command path a grace window to commit
+    //   the dispatched-log row before the reconciler intervenes.
+    // - lookbackWindow bounds the scan size — at millions of business
+    //   rows per day, an unbounded scan would dominate the loop on big
+    //   tables. Incidents older than lookbackWindow are out of the
+    //   reconciler's auto-recovery scope and require manual remediation
+    //   (extend the window temporarily during incident response if
+    //   needed).
+    Task<int> ScanAndRepublishAsync(
+        TimeSpan minAge,
+        TimeSpan lookbackWindow,
+        CancellationToken cancellationToken
+    );
 }

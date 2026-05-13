@@ -42,22 +42,32 @@ public sealed class IngestOutboxReconciler(
 
     public async Task<int> ScanAndRepublishAsync(
         TimeSpan minAge,
+        TimeSpan lookbackWindow,
         CancellationToken cancellationToken
     )
     {
-        var threshold = clock.UtcNow.Subtract(minAge);
+        var now = clock.UtcNow;
+        var threshold = now.Subtract(minAge);
+        var lookback = now.Subtract(lookbackWindow);
         var eventType = nameof(TransactionIngestedIntegrationEvent);
 
         // Two-step diff. We can't join across DbContexts in LINQ — EF
         // compiles to SQL per-context. Same physical database, but
         // different change trackers and connections at the EF layer.
-        // The batch is bounded to MaxBatchSize so a multi-hour backlog
-        // gets chipped at over multiple passes instead of one giant
-        // query. Rejected rows raise no event by design (RecordRejected
-        // does not call RaiseDomainEvent) — skip them.
+        //
+        // Bounded scan: only rows in (lookback, threshold) are
+        // candidates. The supporting index
+        // ix_vendor_transactions_received_at_status keeps each pass
+        // O(window-size) rather than O(table-size) — critical at
+        // millions of rows/day. Rejected rows raise no event by design
+        // (RecordRejected does not call RaiseDomainEvent) — skip them.
         var candidates = await business
             .VendorTransactions.AsNoTracking()
-            .Where(t => t.ReceivedAt < threshold && t.Status != TransactionStatus.Rejected)
+            .Where(t =>
+                t.ReceivedAt > lookback
+                && t.ReceivedAt < threshold
+                && t.Status != TransactionStatus.Rejected
+            )
             .OrderBy(t => t.ReceivedAt)
             .Take(MaxBatchSize)
             .ToListAsync(cancellationToken);
