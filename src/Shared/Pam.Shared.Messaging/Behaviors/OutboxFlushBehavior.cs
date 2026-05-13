@@ -13,7 +13,9 @@ namespace Pam.Shared.Messaging.Behaviors;
 //  1. Command handler runs, writes to its module's business DbContext, calls
 //     SaveChangesAsync. The DispatchDomainEventsInterceptor fires (pre-save),
 //     dispatches domain events via MediatR. Bridge handlers receive each
-//     event and call IPublishEndpoint.Publish.
+//     event and call IPublishEndpoint.Publish; they also Add an
+//     OutboxDispatchedLog row to PamMessagingDbContext so the reconciler
+//     can detect orphans later.
 //
 //  2. The single .UseBusOutbox() registration in AddPamMassTransit binds
 //     PamMessagingDbContext as the bus-wide outbox target — every Publish
@@ -21,25 +23,32 @@ namespace Pam.Shared.Messaging.Behaviors;
 //     tracker (regardless of which module's save is currently running).
 //
 //  3. The business SaveChanges completes — only the business rows are
-//     persisted. The OutboxMessage rows are still sitting in
-//     PamMessagingDbContext's in-memory change tracker.
+//     persisted. The OutboxMessage and OutboxDispatchedLog rows are still
+//     sitting in PamMessagingDbContext's in-memory change tracker.
 //
 //  4. This behavior calls PamMessagingDbContext.SaveChangesAsync, committing
-//     the outbox rows. The BusOutboxDeliveryService polls the table and
-//     forwards messages to RabbitMQ.
+//     the outbox + dispatched-log rows. The BusOutboxDeliveryService polls
+//     the table and forwards messages to RabbitMQ.
 //
-// Atomicity caveat: business commit (step 3) and outbox commit (step 4) run
-// in SEPARATE transactions. A crash between (3) and (4) leaves the business
-// row persisted but the integration event undelivered — an under-deliver
-// failure mode. True atomicity requires a shared connection + shared
-// transaction across both DbContexts (or MT 9.1's per-DbContext outbox,
-// which we can't use while the project holds the Apache-2.0 line). The
-// under-deliver risk is bounded by the time between (3) and (4) — typically
-// sub-millisecond — and is documented as an accepted trade-off in
-// docs/DECISIONS.md. A reconciliation job lands as a follow-up.
+// Atomicity caveat — and how we cover it: business commit (step 3) and
+// outbox commit (step 4) run in SEPARATE transactions. A crash between (3)
+// and (4) leaves the business row persisted but the integration event
+// undelivered — sub-millisecond under-deliver window. We attempted to
+// close this by sharing a SqlConnection + IDbContextTransaction across
+// the business + messaging DbContexts; it fights EF Core's connection
+// model when handlers query the DB before calling SaveChanges (the
+// context opens its own connection independently of the ambient txn, and
+// UseTransaction after the fact errors with "transaction is not
+// associated with the current connection"). MT 8.5's one-DbContext-per-
+// bus constraint also rules out the canonical per-module-outbox fix; MT
+// 9.1's multi-DbContext outbox is off-limits per the Apache-2.0 license
+// pin (ADR #5). The OutboxReconciliationService is the defensive backstop
+// that closes the practical risk: every business row whose dispatched-log
+// entry is missing gets republished on the next sweep (5 min default).
+// See DECISIONS.md ADR #28 for the design rationale.
 //
-// Why this is INNERMOST (after AuditBehavior): if the flush throws, audit
-// must record the failure, not a misleading "success".
+// Pipeline position: innermost behavior, after AuditBehavior. If the flush
+// throws, audit records the failure rather than a misleading "success".
 public sealed class OutboxFlushBehavior<TRequest, TResponse>(
     PamMessagingDbContext messaging,
     ILogger<OutboxFlushBehavior<TRequest, TResponse>> logger

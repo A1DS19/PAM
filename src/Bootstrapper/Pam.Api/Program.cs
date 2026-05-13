@@ -21,6 +21,7 @@ using Pam.Shared.Exceptions.Handlers;
 using Pam.Shared.Extensions;
 using Pam.Shared.Http;
 using Pam.Shared.Messaging.Extensions;
+using Pam.Shared.Messaging.Reconciliation;
 using Pam.Wallet;
 using RedisRateLimiting;
 using Scalar.AspNetCore;
@@ -67,6 +68,13 @@ builder.Services.AddPamMediatR(moduleAssemblies);
 builder.Services.AddPamMassTransit(
     builder.Configuration,
     typeof(NotificationsModule).Assembly
+);
+
+// Bind OutboxReconciliationOptions from Messaging:Reconciliation. The
+// host has the configuration binder available; Pam.Shared.Messaging
+// doesn't take the AspNetCore framework dep just for this.
+builder.Services.Configure<OutboxReconciliationOptions>(
+    builder.Configuration.GetSection(OutboxReconciliationOptions.SectionName)
 );
 
 builder.Services.AddHttpContextAccessor();

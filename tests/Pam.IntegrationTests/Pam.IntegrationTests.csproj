@@ -10,6 +10,8 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Bootstrapper\Pam.Api\Pam.Api.csproj" />
     <ProjectReference Include="..\..\src\Modules\Operators\Pam.Operators.Contracts\Pam.Operators.Contracts.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Ingest\Pam.Ingest\Pam.Ingest.csproj" />
+    <ProjectReference Include="..\..\src\Shared\Pam.Shared.Messaging\Pam.Shared.Messaging.csproj" />
   </ItemGroup>
 
   <ItemGroup>

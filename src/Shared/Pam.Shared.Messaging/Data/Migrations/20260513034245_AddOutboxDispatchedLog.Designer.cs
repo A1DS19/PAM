@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Pam.Shared.Messaging.Data;
 
@@ -11,9 +12,11 @@ using Pam.Shared.Messaging.Data;
 namespace Pam.Shared.Messaging.Data.Migrations
 {
     [DbContext(typeof(PamMessagingDbContext))]
-    partial class PamMessagingDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260513034245_AddOutboxDispatchedLog")]
+    partial class AddOutboxDispatchedLog
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder
@@ -250,25 +253,22 @@ namespace Pam.Shared.Messaging.Data.Migrations
                         .HasColumnType("nvarchar(32)")
                         .HasColumnName("module");
 
-                    b.Property<string>("EventType")
-                        .HasMaxLength(200)
-                        .HasColumnType("nvarchar(200)")
-                        .HasColumnName("event_type");
-
                     b.Property<string>("BusinessPk")
                         .HasMaxLength(64)
                         .HasColumnType("nvarchar(64)")
                         .HasColumnName("business_pk");
 
+                    b.Property<string>("EventType")
+                        .HasMaxLength(200)
+                        .HasColumnType("nvarchar(200)")
+                        .HasColumnName("event_type");
+
                     b.Property<DateTimeOffset>("DispatchedAt")
                         .HasColumnType("datetimeoffset")
                         .HasColumnName("dispatched_at");
 
-                    b.HasKey("Module", "EventType", "BusinessPk")
+                    b.HasKey("Module", "BusinessPk", "EventType")
                         .HasName("pk_outbox_dispatched_log");
-
-                    b.HasIndex("DispatchedAt")
-                        .HasDatabaseName("IX_outbox_dispatched_log_dispatched_at");
 
                     b.ToTable("outbox_dispatched_log", "messaging");
                 });

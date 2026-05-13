@@ -1,5 +1,6 @@
 using MassTransit;
 using Microsoft.EntityFrameworkCore;
+using Pam.Shared.Messaging.Reconciliation;
 
 namespace Pam.Shared.Messaging.Data;
 
@@ -25,6 +26,11 @@ public sealed class PamMessagingDbContext(DbContextOptions<PamMessagingDbContext
 {
     public const string Schema = "messaging";
 
+    // Reconciliation log written by bridge handlers in the same atomic
+    // transaction as the publish; queried by OutboxReconciliationService to
+    // detect business rows whose integration event never landed.
+    public DbSet<OutboxDispatchedLog> DispatchedLog => Set<OutboxDispatchedLog>();
+
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema(Schema);
@@ -32,5 +38,7 @@ public sealed class PamMessagingDbContext(DbContextOptions<PamMessagingDbContext
         modelBuilder.AddInboxStateEntity();
         modelBuilder.AddOutboxMessageEntity();
         modelBuilder.AddOutboxStateEntity();
+
+        modelBuilder.ApplyConfiguration(new OutboxDispatchedLogConfiguration());
     }
 }

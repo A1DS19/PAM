@@ -194,13 +194,16 @@ OutboxFlushBehavior — tail of command pipeline
 > What this buys us: once the outbox row is committed, a crash before
 > broker publish can never lose the event — the row in
 > `messaging.outbox_message` is the source of truth and the delivery
-> service retries until the broker accepts it. A sub-millisecond
-> under-deliver window between business and outbox commits is the
-> remaining gap, covered by ROADMAP item #1 (shared-connection-shared-
-> transaction work) and a reconciliation backstop. **Non-negotiable
-> for Wallet** — a missed "balance changed" event corrupts financial
-> state. The shared messaging schema covers Wallet from its first PR
-> automatically.
+> service retries until the broker accepts it. The business commit
+> and the outbox commit are still separate transactions (ADR #28
+> documents the failed attempt at single-txn atomicity via shared
+> `SqlConnection`/`UseTransaction` — EF Core's connection model
+> fights it). What closes the practical gap is the
+> `OutboxReconciliationService` + per-module `IOutboxReconciler` +
+> `outbox_dispatched_log` table: every published event leaves a log
+> row, and the reconciler republishes any business row whose log
+> entry is missing. **Non-negotiable for Wallet** — the reconciler
+> covers Wallet from day one of the ledger.
 
 ---
 

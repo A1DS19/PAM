@@ -453,15 +453,45 @@ before now produces:
   outbox semantic; verify via the log line or the exchange list, not
   a SELECT against the table.
 
-**Atomicity caveat (carried forward as a follow-up).** The business
-`SaveChanges` and the outbox `SaveChanges` run in separate
-transactions. A crash between the two leaves the business row
-committed but the integration event undelivered. The window is
-bounded by request-tail-time (~ms). True cross-context atomicity via
-shared `SqlConnection` + shared `IDbContextTransaction` is logged
-as the next follow-up in [ROADMAP.md](ROADMAP.md). A reconciliation
-job lands as a defensive backstop regardless of which atomicity path
-we take.
+**Atomicity caveat (covered by the reconciler).** The
+`VendorTransaction` row commits via `IngestDbContext.SaveChangesAsync`
+inside the handler; the `OutboxMessage` + `outbox_dispatched_log` rows
+commit via `OutboxFlushBehavior`'s `PamMessagingDbContext.SaveChangesAsync`
+at the tail of the pipeline. Two SQL `COMMIT`s, so a crash between
+them leaves the business row persisted with no integration event
+queued. Cross-context single-transaction atomicity was attempted and
+reverted (see ADR #28). The practical risk is closed by
+`IngestOutboxReconciler` (`IOutboxReconciler` impl under
+`OutboxReconciliationService`, 5-min interval): any
+`vendor_transactions` row whose `outbox_dispatched_log` entry is
+missing gets republished through the normal `Publish` +
+`DispatchedLog.Add` path on the next sweep.
+
+**Scale at millions of transactions per day.**
+
+- **Reconciler scan** is bounded by
+  `Messaging:Reconciliation:LookbackWindow` (default 2 days) — only
+  rows in `(now - lookback, now - minAge)` are candidates. Served by
+  `ix_vendor_transactions_received_at_status` so each pass is
+  O(window-size), not O(table-size). Incidents older than the
+  lookback fall outside auto-recovery; operators extend the window
+  temporarily during incident response if needed.
+- **`outbox_dispatched_log` retention.** Rows older than
+  `Messaging:Reconciliation:RetentionWindow` (default 3 days, must be
+  ≥ `LookbackWindow + safety`) get batched-deleted by
+  `OutboxReconciliationService`'s cleanup pass each cycle.
+  `DELETE TOP (CleanupBatchSize)` (default 10 000, hard-clamped
+  [1, 50 000]) keeps each batch under SQL Server's lock-escalation
+  threshold and prevents transaction-log blowups.
+  `CleanupMaxBatchesPerCycle` (default 50 → 500 k rows/cycle) caps
+  per-cycle work so a multi-day backlog doesn't starve
+  reconciliation.
+- **`vendor_transactions` partitioning** is the next-phase scale work.
+  The table is regulator-immutable, so the strategy is not delete-by-
+  age but time-based partitioning on `received_at` with sliding-window
+  age-out. Pinned in ROADMAP item 1 as the open follow-up — triggers
+  when Wallet ships or Phase D retires GBS's casino write path,
+  whichever first.
 
 ### Smoke test (SOAP envelope, end-to-end)
 

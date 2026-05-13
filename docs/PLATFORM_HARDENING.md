@@ -111,16 +111,29 @@ DECISIONS.md ADR #26 for the architectural rationale.
 `SavingChangesAsync` (pre-save on the business DbContext). Bridge
 handlers' `IPublishEndpoint.Publish` calls enrol in the bus-wide
 outbox, writing `OutboxMessage` rows into `PamMessagingDbContext`'s
-change tracker. `OutboxFlushBehavior` (innermost MediatR pipeline
-behavior) commits those rows at the tail of every command;
-`BusOutboxNotification` wakes `BusOutboxDeliveryService<PamMessagingDbContext>`,
-which forwards to RabbitMQ and removes delivered rows.
+change tracker; bridge handlers also `Add` an `OutboxDispatchedLog`
+row so the reconciler can detect orphans. `OutboxFlushBehavior`
+(innermost MediatR pipeline behavior) commits both rows together at
+the tail of every command via a single `messaging.SaveChangesAsync`.
+`BusOutboxNotification` wakes
+`BusOutboxDeliveryService<PamMessagingDbContext>`, which forwards to
+RabbitMQ and removes delivered rows. The business `SaveChanges` is a
+SEPARATE transaction from the outbox `SaveChanges`; the
+`OutboxReconciliationService` hosted service is the defensive
+backstop, polling per-module `IOutboxReconciler`s every 5 min and
+republishing business rows whose `outbox_dispatched_log` entry is
+missing. See DECISIONS.md ADR #28.
 
 **Trade-offs locked in.**
 - Domain handlers see pre-commit state. Queries against freshly-written
   rows return nothing — pass data through the event payload instead.
-- A throwing handler rolls back the whole `SaveChanges`. Atomic by
-  design. Don't put best-effort side effects (logging, metrics) in
+- A throwing handler rolls back the business `SaveChanges`. The outbox
+  `SaveChanges` hasn't fired yet, so the OutboxMessage + dispatched-log
+  rows never land — net effect: aggregate write + outbox queue are
+  either both attempted or both skipped from the producer's side.
+- Sub-millisecond under-deliver window between the two commits is
+  bounded; the reconciler eventually catches anything that slips
+  through. Don't put best-effort side effects (logging, metrics) in
   domain handlers; put them in integration-event consumers.
 
 ### 5. Concurrent-boot seeder lock — `chore/seeder-advisory-lock`

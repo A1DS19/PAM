@@ -9,6 +9,91 @@ Rough ADR shape, kept terse. Order is reverse-chronological.
 
 ---
 
+## 28. Outbox atomicity via reconciler backstop, not shared `SqlConnection` — 2026-05-13
+
+**Context.** ADR #26 picked a single shared `PamMessagingDbContext` for the
+bus-wide MassTransit outbox after MT 8.5.x's
+`IScopedBusContextProvider<IBus>` constraint ruled out per-module outbox
+DbContexts. That fix made publish routing correct, but business
+`SaveChanges` (module `DbContext`) and outbox `SaveChanges`
+(`PamMessagingDbContext`) committed in **separate transactions** — a
+sub-millisecond under-deliver window between the two commits. Acceptable
+for everything currently shipped (advisory side-effects); not acceptable
+for Wallet, where a missed `LedgerEntryPosted` would corrupt every
+downstream projection.
+
+The blessed MT 8.5 atomicity recipe — "register `InboxState` /
+`OutboxState` / `OutboxMessage` on the *same* DbContext that owns the
+business tables" — works for single-module apps, doesn't compose for
+seven modules. MT 9.1+ adds MultiBus + per-DbContext outbox; off the
+table while ADR #5 pins MT at 8.5.9 (last Apache-2.0 release).
+`TransactionScope` / MSDTC is explicitly incompatible with the EF outbox
+(MT discussion #4972 — the outbox uses `IDbContextTransaction` directly,
+doesn't enlist in ambient `TransactionScope`).
+
+**Decision.** Two pieces, in order of how the correctness story actually
+holds together:
+
+1. **`outbox_dispatched_log` table + bridge-handler stamping** — every
+   bridge handler that calls `IPublishEndpoint.Publish` also adds an
+   `OutboxDispatchedLog` row to `PamMessagingDbContext`. Both writes
+   land in the same change tracker and commit together via
+   `OutboxFlushBehavior`'s single `messaging.SaveChangesAsync`. Result:
+   *outbox-tier atomicity* — the `OutboxMessage` row and the
+   "I-published-this" log row either both exist or neither does.
+2. **`OutboxReconciliationService` + per-module `IOutboxReconciler`** —
+   `IHostedService` polls every 5 min (configurable via
+   `Messaging:Reconciliation:Interval`), calls each module's
+   reconciler, which queries the business table for rows older than
+   `MinAge` whose `outbox_dispatched_log` entry is missing and
+   republishes them through the normal `Publish` + `DispatchedLog.Add`
+   path. `IngestOutboxReconciler` is the first concrete impl.
+   Per-reconciler exception isolation; disabled in integration tests
+   via `OutboxReconciliationOptions.Enabled=false` so manual probes
+   don't race the timer.
+
+**What we tried and reverted.** A shared `SqlConnection` +
+`IDbContextTransaction` across the business and messaging DbContexts —
+`AtomicOutboxBehavior` would open a txn on `PamMessagingDbContext`,
+stash it in a scoped `AmbientTransaction`, and an
+`AmbientTransactionInterceptor` on every business `DbContext` would
+call `Database.UseTransactionAsync` in `SavingChangesAsync`. This fights
+EF Core's connection model: when a handler does a query *before*
+calling `SaveChangesAsync` (e.g. `IngestTransactionHandler`'s fast-path
+duplicate check), the business context opens its own connection
+independently of the ambient txn. The subsequent `UseTransaction`
+errors with "The specified transaction is not associated with the
+current connection. Only transactions associated with the current
+connection may be used." Verified live with a 21G SOAP smoke test
+against the running API. Connection-interceptor-based redirection
+(`IDbConnectionInterceptor.ConnectionOpening` → `SetDbConnection`) was
+also explored — it works only when no operation has yet run on the
+context, which we can't guarantee for handlers that query first.
+
+**Consequences.**
+- Outbox tier is internally atomic (`OutboxMessage` ↔
+  `OutboxDispatchedLog`). Business tier and outbox tier are decoupled
+  by a sub-millisecond under-deliver window — bounded, and
+  reconciler-covered on the next sweep.
+- Reconciler is at-least-once; consumers must dedupe via MT's
+  `UseEntityFrameworkOutbox<PamMessagingDbContext>` on the receive
+  endpoint (lands with `Pam.Notifications`'s first consumer PR).
+- Acceptable for every module currently shipped (advisory effects). For
+  Wallet, the under-deliver window remains a known risk — the
+  reconciler closes the practical gap, but Wallet's ledger PR will
+  revisit whether tighter atomicity (e.g. moving Wallet's outbox onto
+  `WalletDbContext` directly and accepting the MT-8.5
+  one-bus-per-outbox limit for the rest of the system) is worth the
+  re-architect.
+- `OutboxFlushBehavior` stays innermost; `DispatchDomainEventsInterceptor`
+  stays pre-save (handlers see pre-commit state of their own context).
+
+Wired in `Pam.Shared.Messaging.AddPamMassTransit`. Reconcilers live in
+each module's `Reconciliation/` folder; the dispatched-log entity lives
+in `Pam.Shared.Messaging.Reconciliation`.
+
+---
+
 ## 27. Database platform: SQL Server (supersedes ADR #22) — 2026-05-12
 
 **Status:** supersedes ADR #22 ("Postgres over MS SQL Server").

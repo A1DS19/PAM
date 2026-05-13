@@ -52,6 +52,12 @@ public sealed class PamApiFactory(PamContainersFixture containers)
                         // share keys across CI parallel invocations.
                         ["DataProtection:ApplicationName"] =
                             $"pam-api/IntegrationTests/{Guid.NewGuid():N}",
+                        // Disable the reconciliation BackgroundService by
+                        // default — tests that exercise the reconciler
+                        // invoke IOutboxReconciler.ScanAndRepublishAsync
+                        // explicitly so the assertion isn't racing the
+                        // timer.
+                        ["Messaging:Reconciliation:Enabled"] = "false",
                     }
                 );
             }

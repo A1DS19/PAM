@@ -6,6 +6,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Pam.Shared.Messaging.Behaviors;
 using Pam.Shared.Messaging.Data;
+using Pam.Shared.Messaging.Reconciliation;
 
 namespace Pam.Shared.Messaging.Extensions;
 
@@ -65,6 +66,18 @@ public static class MassTransitExtensions
             typeof(IPipelineBehavior<,>),
             typeof(OutboxFlushBehavior<,>)
         );
+
+        // Reconciler backstop. Each module that publishes integration
+        // events registers an IOutboxReconciler in its AddXModule.
+        // OutboxReconciliationService iterates them on the configured
+        // Interval; orphan business rows (no matching dispatched_log row)
+        // get republished. See DECISIONS.md ADR #28.
+        //
+        // OutboxReconciliationOptions is bound in Pam.Api's Program.cs
+        // (which has the framework binder available) — defaults apply
+        // here if no configuration is bound by the host.
+        services.AddOptions<OutboxReconciliationOptions>();
+        services.AddHostedService<OutboxReconciliationService>();
 
         services.AddMassTransit(x =>
         {

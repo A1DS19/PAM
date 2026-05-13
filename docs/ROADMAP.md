@@ -14,23 +14,43 @@ the same day, refactored to a shared `PamMessagingDbContext` (schema
 declares in RabbitMQ and the `Flushed N outbox row(s)` debug line
 fires per command.
 
-1. **Cross-context outbox atomicity (currently a separate-transaction
-   gap).** The shared-messaging-DbContext fix in ADR #26 routes every
-   publish into `messaging.outbox_message` correctly, but the business
-   `SaveChanges` (module DbContext) and the outbox `SaveChanges`
-   (messaging DbContext) commit in **separate transactions**. A crash
-   between the two leaves the business row persisted and the
-   integration event undelivered — a sub-millisecond at-most-once
-   window, but a real one. Two paths forward, pick by Phase B:
-   (a) shared `SqlConnection` + shared `IDbContextTransaction` across
-   both DbContexts (each `AddDbContext<T>` resolves the ambient
-   connection from a scoped service; a MediatR pipeline behavior
-   begins the transaction before queries; `AutoTransactionBehavior` is
-   overridden), or (b) upgrade `MassTransit.EntityFrameworkCore` to
-   9.1 once the commercial-license question is resolved and use the
-   per-DbContext `AddEntityFrameworkOutbox<TBus, TDbContext>`
-   overload. A reconciliation job that diff-checks business rows
-   against delivered events lands as a defensive backstop regardless.
+1. **Cross-context outbox atomicity — partial.** Path (a) was attempted
+   and reverted: opening a shared `IDbContextTransaction` on
+   `PamMessagingDbContext` and enrolling each business `DbContext` via
+   `Database.UseTransactionAsync` in `SavingChangesAsync` fights EF
+   Core's connection model. Handlers that query the DB before calling
+   `SaveChanges` open the context's own connection independently of
+   the ambient transaction, and `UseTransaction` after the fact errors
+   with "transaction is not associated with the current connection".
+   Path (b) — MT 9.1's multi-DbContext outbox — stays off the table per
+   the Apache-2.0 license pin (ADR #5). What landed is the **reconciler
+   backstop**: each module's bridge handler writes an
+   `outbox_dispatched_log` row alongside `IPublishEndpoint.Publish`
+   (both commit together in `OutboxFlushBehavior`'s messaging
+   `SaveChanges`), and `OutboxReconciliationService`
+   (`IHostedService`, 5-min interval) republishes any business row
+   whose dispatched-log entry is missing. The reconciler scan is
+   bounded by `LookbackWindow` (default 2 days) and served by
+   `ix_vendor_transactions_received_at_status` so each pass is
+   O(window-size) regardless of total table size; a second pass per
+   cycle batched-deletes `outbox_dispatched_log` rows older than
+   `RetentionWindow` (default 3 days). Net result: producer-side
+   atomicity at the outbox tier, plus eventual consistency for the
+   business↔outbox seam, with bounded scan + bounded retention to
+   sustain millions of transactions per day. See DECISIONS.md ADR #28
+   for the full trade-off discussion.
+
+   **Open follow-up — `vendor_transactions` partitioning.** The
+   business table grows ~30M rows/month at expected ingest volume and
+   is regulator-immutable (can't delete). Plan: time-based partitioning
+   on `received_at` with monthly partitions and a sliding-window
+   age-out via `ALTER PARTITION ... SWITCH`. Old partitions move to a
+   read-only filegroup; archive partitions drop after the regulatory
+   retention period. Triggers when either (a) Wallet's ledger ships
+   and matches Ingest's scale profile, or (b) Phase D of the Ingest
+   strangler retires GBS's casino write path and PAM owns the
+   transaction record for production. Whichever comes first becomes
+   the partitioning PR.
 2. **`Pam.Ingest` Phase A — intercept-and-forward.** Five concrete
    sub-tasks, ordered for short-PR delivery; each item is the next
    session's starting point if the one above merges. The column names

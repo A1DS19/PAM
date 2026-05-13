@@ -492,18 +492,69 @@ Trade-offs you're buying into:
   That's the point — atomic by design. Don't put best-effort side
   effects (logging, metrics) in a domain handler; put them in an
   integration-event consumer.
-- **Atomicity caveat (currently accepted).** The business `SaveChanges`
-  and the outbox `SaveChanges` run in separate transactions. A crash
-  between (4) and (5) leaves the business row committed but the
-  integration event undelivered. The window is bounded by request-tail
-  time (~ms). True cross-context atomicity (shared `SqlConnection`
-  + shared `IDbContextTransaction`) and a reconciliation job are
-  follow-ups documented in ROADMAP.md and DECISIONS.md ADR #26.
+- **Atomicity caveat (covered by the reconciler).** The business
+  `SaveChanges` and the outbox `SaveChanges` run in separate
+  transactions. A crash between them leaves the business row committed
+  but the integration event undelivered — sub-millisecond under-deliver
+  window. We tried closing it with a shared `SqlConnection` +
+  `IDbContextTransaction` across the business and messaging DbContexts;
+  it broke when handlers query the DB before calling `SaveChanges` (EF
+  Core opens the context's connection independently of the ambient
+  transaction, then `UseTransaction` fails with "transaction is not
+  associated with the current connection"). MT 8.5's
+  one-DbContext-per-bus constraint also rules out the canonical
+  per-module-outbox fix; MT 9.1's multi-DbContext outbox is off-limits
+  per the Apache-2.0 license pin (ADR #5). See DECISIONS.md ADR #28.
+- **Reconciler closes the practical gap.** Each publishing module's
+  bridge handler writes an `outbox_dispatched_log` row (in the messaging
+  context's change tracker) in the same dispatch path as
+  `IPublishEndpoint.Publish`. The two rows commit together via
+  `OutboxFlushBehavior`'s single `messaging.SaveChangesAsync`, giving
+  *atomicity within the outbox tier*. Business rows whose dispatched-log
+  entry is missing get republished on the next sweep of
+  `OutboxReconciliationService` (`IHostedService`, 5-min default).
 - The `messaging.outbox_message` table is **empty in steady state**
   — that's correct outbox semantics: the delivery service removes
   delivered rows. Use the API log's `Flushed N outbox row(s)` debug
   line or the RabbitMQ exchange list to verify activity, not a SELECT
   against the table.
+
+### Scale: bounded scans + dispatched-log retention
+
+At millions of transactions per day, two tables grow rapidly:
+
+- **`messaging.outbox_dispatched_log`** — 1:1 with integration events
+  (one row per `Publish` call). Operational data with no regulatory
+  retention requirement.
+- **`<module>.<business_table>`** (e.g. `ingest.vendor_transactions`)
+  — regulator-immutable; growth is the business growth itself.
+
+**For `outbox_dispatched_log`:** `OutboxReconciliationService` runs two
+passes per cycle. The first scans the bounded window
+`(now - LookbackWindow, now - MinAge)` in each module's business table
+— at the default 2-day lookback, each pass touches at most ~2 days of
+data regardless of total table size. The second pass batched-deletes
+dispatched-log rows older than `RetentionWindow` (default 3 days, must
+be ≥ `LookbackWindow + safety`). `DELETE TOP (N)` keeps each batch
+below SQL Server's lock-escalation threshold and bounds transaction-log
+growth per pass. `CleanupMaxBatchesPerCycle` caps per-cycle work so a
+deep backlog doesn't starve reconciliation. The composite PK is
+`(Module, EventType, BusinessPk)` to match the reconciler's IN-list
+lookup; a non-clustered index on `DispatchedAt` supports the retention
+sweep.
+
+**For `<module>.<business_table>`:** the reconciler's scan is index-
+served by `ix_vendor_transactions_received_at_status` (and the
+equivalent for any future module's table — adopt the same pattern when
+the module ships). That keeps per-pass cost O(window-size), not
+O(table-size). For total-table growth, **time-based partitioning** on
+`ReceivedAt` is the planned next step — monthly partitions with a
+sliding-window age-out: switch the oldest partition out into a
+read-only filegroup or archive table, swap a new empty partition in
+for next month, drop the archive partitions after the regulatory
+retention period. Not implemented today; lands when the first
+production-scale module forces the issue (Wallet's ledger or
+post-cutover Ingest, whichever arrives first). Pinned in ROADMAP.
 
 **Adding a new publisher** = define a domain event, write a bridge
 handler that calls `IPublishEndpoint.Publish` with an integration
