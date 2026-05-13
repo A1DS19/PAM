@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Pam.Notifications</RootNamespace>
+    <AssemblyName>Pam.Notifications</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Pam.Notifications.Contracts\Pam.Notifications.Contracts.csproj" />
+    <ProjectReference Include="..\..\..\Shared\Pam.Shared.Messaging\Pam.Shared.Messaging.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="MassTransit" />
+    <PackageReference Include="MailKit" />
+  </ItemGroup>
+
+</Project>

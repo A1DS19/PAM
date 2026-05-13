@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>Pam.ArchitectureTests</RootNamespace>
+    <AssemblyName>Pam.ArchitectureTests</AssemblyName>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Modules\Audit\Pam.Audit\Pam.Audit.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Operators\Pam.Operators\Pam.Operators.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Identity\Pam.Identity\Pam.Identity.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Notifications\Pam.Notifications\Pam.Notifications.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Players\Pam.Players\Pam.Players.csproj" />
+    <ProjectReference Include="..\..\src\Modules\Wallet\Pam.Wallet\Pam.Wallet.csproj" />
+    <ProjectReference Include="..\..\src\Shared\Pam.Shared\Pam.Shared.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" />
+    <PackageReference Include="xunit.runner.visualstudio">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" />
+    <PackageReference Include="FluentAssertions" />
+
+    <PackageReference Include="NetArchTest.Rules" />
+  </ItemGroup>
+
+</Project>

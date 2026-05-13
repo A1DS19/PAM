@@ -1,0 +1,79 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+indent_style = space
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{cs,vb}]
+indent_size = 4
+dotnet_sort_system_directives_first = true
+dotnet_separate_import_directive_groups = false
+
+# Naming
+dotnet_naming_rule.private_fields_underscore.severity = warning
+dotnet_naming_rule.private_fields_underscore.symbols = private_fields
+dotnet_naming_rule.private_fields_underscore.style = underscore_camel_case
+
+dotnet_naming_symbols.private_fields.applicable_kinds = field
+dotnet_naming_symbols.private_fields.applicable_accessibilities = private
+dotnet_naming_symbols.private_fields.required_modifiers =
+
+dotnet_naming_style.underscore_camel_case.required_prefix = _
+dotnet_naming_style.underscore_camel_case.capitalization = camel_case
+
+# C# formatting
+csharp_indent_braces = false
+csharp_indent_case_contents = true
+csharp_indent_switch_labels = true
+csharp_new_line_before_open_brace = all
+csharp_new_line_before_else = true
+csharp_new_line_before_catch = true
+csharp_new_line_before_finally = true
+csharp_prefer_braces = when_multiline:suggestion
+csharp_style_namespace_declarations = file_scoped:warning
+csharp_style_prefer_primary_constructors = true:suggestion
+csharp_style_prefer_top_level_statements = false:silent
+csharp_using_directive_placement = outside_namespace:warning
+csharp_style_var_for_built_in_types = true:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_var_elsewhere = true:silent
+
+# Severity tweaks (mirror Directory.Build.props NoWarn so the IDE matches the build)
+dotnet_diagnostic.IDE0058.severity = none
+dotnet_diagnostic.CA1030.severity = none   # RaiseDomainEvent reads better than an event
+dotnet_diagnostic.CA1031.severity = none   # rollback handlers intentionally catch all
+dotnet_diagnostic.CA1032.severity = none   # exceptions force (code, message) by design
+dotnet_diagnostic.CA1056.severity = none   # config binding works better with string
+dotnet_diagnostic.CA1308.severity = none   # email normalization to lowercase is correct
+dotnet_diagnostic.CA1515.severity = none   # public DI-registered types are intentional
+dotnet_diagnostic.S1075.severity = none    # URL building uses '/' delimiter intentionally
+dotnet_diagnostic.CA1040.severity = none   # CQRS marker interfaces
+dotnet_diagnostic.CA1062.severity = none   # nullable refs already enforce non-null
+dotnet_diagnostic.CA1707.severity = none
+dotnet_diagnostic.CA1716.severity = none   # VB-keyword conflicts (we are C#-only)
+dotnet_diagnostic.CA1812.severity = none
+dotnet_diagnostic.CA1848.severity = none
+dotnet_diagnostic.CA1873.severity = none   # source-gen logger deferred
+dotnet_diagnostic.CA2007.severity = none
+dotnet_diagnostic.MA0004.severity = none
+dotnet_diagnostic.MA0048.severity = none
+dotnet_diagnostic.MA0051.severity = none
+dotnet_diagnostic.S1144.severity = none    # EF writes private setters via change tracker
+dotnet_diagnostic.S2139.severity = none    # log+rethrow is correct in pipeline behaviors
+
+[*.{json,yml,yaml,md,xml,csproj,props,targets}]
+indent_size = 2
+
+[*.sln]
+indent_style = tab
+
+[Makefile]
+indent_style = tab
+
+# EF Core generates block-scoped namespaces; treat as generated
+[**/Migrations/*.cs]
+generated_code = true
+dotnet_diagnostic.IDE0161.severity = none
