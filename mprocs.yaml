@@ -2,4 +2,6 @@ procs:
   services:
     shell: docker compose up
   api:
-    shell: sleep 15 && make dev-api
+    # api/ holds the .NET solution + Makefile after the repo split.
+    # -C api makes Make change to that dir before parsing the Makefile.
+    shell: sleep 15 && make -C api dev-api

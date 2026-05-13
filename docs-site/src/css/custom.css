@@ -1,0 +1,53 @@
+/* PAM brand palette — slate-blue primary, with deeper accent on dark mode */
+
+:root {
+  --ifm-color-primary: #3b6cf2;
+  --ifm-color-primary-dark: #1f55ed;
+  --ifm-color-primary-darker: #144be4;
+  --ifm-color-primary-darkest: #103dbb;
+  --ifm-color-primary-light: #5a82f4;
+  --ifm-color-primary-lighter: #688df5;
+  --ifm-color-primary-lightest: #93acf9;
+
+  --ifm-code-font-size: 92%;
+  --ifm-font-family-base: -apple-system, BlinkMacSystemFont, "Segoe UI",
+    "Inter", "Helvetica Neue", Arial, sans-serif;
+  --ifm-font-family-monospace: "JetBrains Mono", "Fira Code",
+    ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.08);
+}
+
+[data-theme="dark"] {
+  --ifm-color-primary: #7ea3ff;
+  --ifm-color-primary-dark: #5a87ff;
+  --ifm-color-primary-darker: #4a7bff;
+  --ifm-color-primary-darkest: #1a58ff;
+  --ifm-color-primary-light: #9fbcff;
+  --ifm-color-primary-lighter: #afc7ff;
+  --ifm-color-primary-lightest: #d4e0ff;
+
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.4);
+  --ifm-background-color: #0e1320;
+  --ifm-background-surface-color: #141a2b;
+}
+
+/* Tighter, more "engineering doc" feel for content typography */
+.markdown {
+  font-size: 0.98rem;
+  line-height: 1.65;
+}
+
+.markdown h1 {
+  letter-spacing: -0.02em;
+}
+
+.markdown h2 {
+  letter-spacing: -0.015em;
+  margin-top: 2.5rem;
+}
+
+/* Mermaid containers feel cleaner with a subtle border */
+[data-theme="dark"] .docusaurus-mermaid-container svg {
+  background: transparent;
+}

@@ -57,6 +57,7 @@ API at `http://localhost:5000`. Scalar UI at `/scalar/v1`. Smoke test in
 | [`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md) | First-time setup, service ports, EF migration commands, feature template, OpenAPI/Scalar. |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Deferred work and the trigger that brings each forward. |
 | [`docs/DECISIONS.md`](docs/DECISIONS.md) | ADR-style log of architectural decisions. |
+| [`docs/DB_SCALING.md`](docs/DB_SCALING.md) | High-volume DB operations guide (reconciliation tuning, retention, partitioning cutover). |
 | [`docs/CORE_PLATFORM_MAPPING.md`](docs/CORE_PLATFORM_MAPPING.md) | Section-by-section mapping of the legacy "Core Platform" feature surface onto planned PAM modules, with the "10x better" decisions. |
 
 ## Repository layout

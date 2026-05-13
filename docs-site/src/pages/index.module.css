@@ -1,0 +1,139 @@
+/* Hero */
+
+.heroBanner {
+  padding: 6rem 0 5rem;
+  text-align: center;
+  background: linear-gradient(
+    135deg,
+    var(--ifm-color-primary-darkest) 0%,
+    var(--ifm-color-primary) 100%
+  );
+  color: white;
+  overflow: hidden;
+  position: relative;
+}
+
+.heroTitle {
+  font-size: 3.5rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin-bottom: 1rem;
+  color: white;
+}
+
+.heroSubtitle {
+  font-size: 1.4rem;
+  margin-bottom: 2.5rem;
+  opacity: 0.9;
+  color: white;
+}
+
+.buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+@media screen and (max-width: 996px) {
+  .heroBanner {
+    padding: 3rem 1.5rem;
+  }
+  .heroTitle {
+    font-size: 2.4rem;
+  }
+  .heroSubtitle {
+    font-size: 1.15rem;
+  }
+}
+
+/* Diagram block (between hero and features) */
+
+.diagramSection {
+  padding: 4rem 0 2rem;
+  background: var(--ifm-background-color);
+}
+
+.sectionTitle {
+  text-align: center;
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  margin-bottom: 0.75rem;
+}
+
+.sectionLede {
+  text-align: center;
+  max-width: 700px;
+  margin: 0 auto 2rem;
+  font-size: 1.05rem;
+  color: var(--ifm-color-emphasis-700);
+  line-height: 1.55;
+}
+
+.diagramFrame {
+  border-radius: 12px;
+  border: 1px solid var(--ifm-color-emphasis-200);
+  padding: 1.5rem 1rem;
+  background: var(--ifm-background-surface-color, var(--ifm-background-color));
+  overflow-x: auto;
+}
+
+.diagramFrame :global(.docusaurus-mermaid-container) {
+  display: flex;
+  justify-content: center;
+}
+
+/* Feature grid */
+
+.featuresSection {
+  padding: 2rem 0 5rem;
+  background: var(--ifm-background-color);
+}
+
+.featureCol {
+  display: flex;
+  margin-bottom: 1.5rem;
+  text-decoration: none !important;
+}
+
+.featureCard {
+  width: 100%;
+  padding: 1.75rem 1.5rem;
+  border-radius: 12px;
+  border: 1px solid var(--ifm-color-emphasis-200);
+  background: var(--ifm-card-background-color, var(--ifm-background-color));
+  transition:
+    transform 160ms ease,
+    box-shadow 160ms ease,
+    border-color 160ms ease;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.featureCol:hover .featureCard {
+  transform: translateY(-3px);
+  box-shadow: 0 12px 24px -8px rgba(0, 0, 0, 0.18);
+  border-color: var(--ifm-color-primary);
+}
+
+.featureIcon {
+  font-size: 2rem;
+  margin-bottom: 0.75rem;
+  line-height: 1;
+}
+
+.featureTitle {
+  font-size: 1.25rem;
+  margin: 0 0 0.5rem;
+  color: var(--ifm-heading-color);
+}
+
+.featureDescription {
+  margin: 0;
+  color: var(--ifm-color-emphasis-700);
+  font-size: 0.96rem;
+  line-height: 1.5;
+}
