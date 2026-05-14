@@ -1,0 +1,46 @@
+#!/bin/bash
+#
+# Pre-push: build + test per workspace that has commits being pushed.
+#
+# Same per-workspace function pattern as pre-commit, but the dispatcher
+# diffs the commits being pushed (upstream..HEAD) rather than the staged
+# set — a stash, branch switch, or amend shouldn't make this hook
+# run/skip incorrectly.
+#
+# Adding a new workspace:
+#   1. Define a check_<workspace>() function. Exit non-zero on failure.
+#   2. Add a path-prefix check to the dispatcher.
+
+set -e
+
+# Files touched by commits we're about to push. Fall back to "all files
+# in HEAD" if no upstream is configured yet (first push of a branch).
+range="$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null && echo "..HEAD")"
+if [ -n "$range" ] && [ "$range" != "..HEAD" ]; then
+  changed="$(git diff --name-only "$range" 2>/dev/null || git ls-tree -r --name-only HEAD)"
+else
+  changed="$(git ls-tree -r --name-only HEAD)"
+fi
+[ -z "$changed" ] && exit 0
+
+echo "→ pre-push: checking workspaces touched by outgoing commits"
+
+check_api() {
+  echo "  api/ — dotnet build -c Release"
+  dotnet build api/pam.slnx --nologo -c Release 2>&1 | tail -5 || {
+    echo "  ✗ build failed — fix before pushing"; exit 1;
+  }
+  echo "  api/ — dotnet test -c Release --no-build"
+  dotnet test api/pam.slnx --nologo --no-build -c Release 2>&1 | tail -5 || {
+    echo "  ✗ tests failed — fix before pushing"; exit 1;
+  }
+}
+
+# check_bo_fe() { ... }
+# check_public_fe() { ... }
+
+echo "$changed" | grep -q '^api/'      && check_api
+# echo "$changed" | grep -q '^bo-fe/'  && check_bo_fe
+# echo "$changed" | grep -q '^public-fe/' && check_public_fe
+
+echo "✓ pre-push passed"

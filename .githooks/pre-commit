@@ -1,0 +1,43 @@
+#!/bin/bash
+#
+# Pre-commit: auto-format staged changes per workspace.
+#
+# Each workspace gets its own function. The dispatcher below runs only
+# the ones whose paths appear in the staged change set, so a frontend-only
+# commit doesn't pay the .NET formatter cost (and vice versa).
+#
+# Adding a new workspace:
+#   1. Define a fmt_<workspace>() function that formats in-place.
+#   2. Add a path-prefix check to the dispatcher.
+#   3. Done — the post-format re-stage at the bottom catches the changes.
+
+set -e
+
+staged="$(git diff --cached --name-only --diff-filter=ACMR)"
+[ -z "$staged" ] && exit 0
+
+echo "→ pre-commit: $(echo "$staged" | wc -l | tr -d ' ') staged file(s)"
+
+fmt_api() {
+  echo "  api/ — dotnet format"
+  dotnet format api/pam.slnx --no-restore 2>&1 | tail -3 || {
+    echo "  ✗ dotnet format failed"; exit 1;
+  }
+}
+
+# fmt_bo_fe() { ... }       # placeholder for back-office SPA
+# fmt_public_fe() { ... }   # placeholder for public-facing FE
+
+# Dispatch by changed-path prefix
+echo "$staged" | grep -q '^api/'      && fmt_api
+# echo "$staged" | grep -q '^bo-fe/'  && fmt_bo_fe
+# echo "$staged" | grep -q '^public-fe/' && fmt_public_fe
+
+# Re-stage anything the formatters touched (so the commit picks up the
+# fixes instead of leaving a dirty working tree).
+modified="$(git diff --name-only)"
+if [ -n "$modified" ]; then
+  echo "$modified" | xargs git add
+fi
+
+echo "✓ pre-commit passed"

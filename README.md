@@ -51,11 +51,18 @@ FluentAssertions 7.2.0).
 ## Quick start
 
 ```bash
+./.githooks/setup.sh                   # one-time: point git at the in-repo hooks
 cd api
 make up                                # mssql, rabbit, redis, otel-lgtm, seq, mailpit
 make dev-api                           # applies Operators migration + dotnet watch
 make test                              # full test suite
 ```
+
+The hooks at `.githooks/pre-commit` (auto-format) and `.githooks/pre-push`
+(build + test) are workspace-aware — they only run sections whose paths
+appear in the changed file set, so a frontend-only commit doesn't pay
+the .NET-formatter cost. Add a new workspace by defining a function and
+a path-prefix check; the dispatcher does the rest.
 
 API at `http://localhost:5000`. Scalar UI at `/scalar/v1`. Grafana at
 `http://localhost:3001`. Seq at `http://localhost:8090`. Mailpit at
