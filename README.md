@@ -1,89 +1,146 @@
 # PAM — Player Admin Manager
 
-A regulated iGaming back-office system. Built as a .NET 10 modular
-monolith with explicit seams so individual modules can be extracted to
-their own services when scale or team-org demands it.
+A regulated iGaming back-office system, replacing the legacy GBS Core
+Platform. Built as a .NET 10 modular monolith with explicit seams so
+individual modules can be extracted to their own services when scale
+or team-org demands it.
 
 ## Status
 
-On `main`: Phase 1 cleanup (drop legacy Players + ZITADEL scaffolding) and
-Phase 2 (Operators module with Brand aggregate). The single live module is
-`Pam.Operators` exposing `POST /v1/operators/brands` and
-`GET /v1/operators/brands/{id}`.
+Seven modules live on `main`:
 
-Phase 3 (next): `Pam.Identity` — embedded **OpenIddict + ASP.NET Core
-Identity** for back-office Users & Agents, with roles + permissions. After
-that, Players is re-introduced (now scoped under a brand and authenticated
-via the embedded IDP), then Wallet, KYC, Limits, Bonuses, Bets, Affiliates,
-Notifications, Reporting, Audit. See [`docs/ROADMAP.md`](docs/ROADMAP.md).
+| Module | What it owns |
+|---|---|
+| `Pam.Identity` | OpenIddict OAuth/OIDC + ASP.NET Core Identity (back-office users, roles, permissions, MFA, password reset) |
+| `Pam.Operators` | Brands and brand-scoped configuration |
+| `Pam.Players` | Player aggregate (brand-scoped, identity-authenticated) |
+| `Pam.Wallet` | Balances and ledger |
+| `Pam.Ingest` | Vendor transaction capture — 21G REST + SOAP, FastSpin Phase-A intercept (forwards to GBS, captures both directions) |
+| `Pam.Notifications` | SMTP-backed email + integration-event subscribers |
+| `Pam.Audit` | Cross-cutting command-log via MediatR pipeline |
+
+Vendor ingestion is the hot path. See `docs-fe/docs/INGEST.md` for the
+canonical request flow, idempotency model, and the strangler-fig
+migration phases (A → B → C).
 
 ## Stack
 
-- **.NET 10** · ASP.NET Core, EF Core 10, Postgres 17 (schema-per-module)
-- **Identity:** embedded OpenIddict + ASP.NET Core Identity (Phase 3). MIT
-  / Apache-2.0 packages, runs in-process — no separate IDP host.
+- **.NET 10** · ASP.NET Core, EF Core 10, **SQL Server 2022**
+  (schema-per-module, snake_case columns via `EFCore.NamingConventions`)
+- **Identity:** embedded OpenIddict 7 + ASP.NET Core Identity. In-process
+  IDP — no separate auth host.
 - **Endpoints:** Carter (vertical slices), Scalar OpenAPI in dev
-- **Mediator + validation:** MediatR (held at 12.4.1, last MIT) +
+- **Mediator + validation:** MediatR 12.4.1 (pinned MIT) +
   FluentValidation 12
-- **Messaging:** MassTransit 8.5.9 + RabbitMQ (outbox pending)
-- **Persistence:** Npgsql + EFCore.NamingConventions (snake_case columns)
-- **Observability:** Serilog (Seq optional), OpenTelemetry tracing /
-  metrics / EF instrumentation
-- **Tests:** xUnit v3 + FluentAssertions 7.2.0
-- **Analyzers:** Meziantou, SonarAnalyzer, BannedApiAnalyzers
-  (warnings-as-errors)
+- **Messaging:** MassTransit 8.5.9 (pinned Apache-2.0) + RabbitMQ,
+  single bus-wide outbox on `Pam.Shared.Messaging` with reconciler
+  backstop
+- **Caching:** Redis (StackExchange.Redis) for query caching + the
+  partitioned rate limiter (multi-replica safe)
+- **Observability:** Serilog → Seq + OpenTelemetry (traces, metrics, EF
+  instrumentation) → otel-lgtm (Grafana + Tempo + Loki + Prometheus)
+- **Tests:** xUnit v3 + FluentAssertions 7.2.0 (pinned Apache-2.0).
+  Architecture tests via NetArchTest. Stress tests via k6.
+- **Analyzers:** Meziantou, SonarAnalyzer, BannedApiAnalyzers — all
+  warnings-as-errors.
 
-Central package management via `Directory.Packages.props`. License-driven
-pins (MediatR 12.4.1, MassTransit 8.5.9, FluentAssertions 7.2.0) are
-documented in [`docs/DECISIONS.md`](docs/DECISIONS.md).
+Central package management via `api/Directory.Packages.props`.
+License-driven pins (MediatR 12.4.1, MassTransit 8.5.9,
+FluentAssertions 7.2.0) are documented in
+[`docs-fe/docs/internal/DECISIONS.md`](docs-fe/docs/internal/DECISIONS.md).
 
 ## Quick start
 
 ```bash
-make up                                # Postgres, Redis, RabbitMQ, Seq
-make migrate-update MODULE=Operators   # apply EF migrations
-make run                               # dotnet watch
-make test                              # unit tests, ~80ms
+cd api
+make up                                # mssql, rabbit, redis, otel-lgtm, seq, mailpit
+make dev-api                           # applies Operators migration + dotnet watch
+make test                              # full test suite
 ```
 
-API at `http://localhost:5000`. Scalar UI at `/scalar/v1`. Smoke test in
-[`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md).
+API at `http://localhost:5000`. Scalar UI at `/scalar/v1`. Grafana at
+`http://localhost:3001`. Seq at `http://localhost:8090`. Mailpit at
+`http://localhost:8025`. First-time setup walkthrough in
+[`docs-fe/docs/LOCAL_DEV.md`](docs-fe/docs/LOCAL_DEV.md).
+
+### Stress harness
+
+Separate Makefile at the repo root drives the k6 stress runs against
+the hot path (FastSpin Phase-A intercept + 21G REST). Requires
+`brew install k6`.
+
+```bash
+make stress-up         # bring up the compose stack
+make stress-api        # API in Stress mode (rate limiter off, stub upstream)
+make stress-reset      # wipe ingest + outbox + audit tables between runs
+make stress-fastspin   # k6 against /v1/ingest/vendors/fastspin/main
+make stress-21g        # k6 against /v1/ingest/vendors/21g
+```
+
+Findings + tunings in [`docs-fe/docs/STRESS.md`](docs-fe/docs/STRESS.md).
 
 ## Documentation
 
+Published docs (rendered by the Docusaurus site under `docs-fe/`):
+
 | Doc | Purpose |
 |---|---|
-| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | The **why** — module boundaries, per-module pattern, identity model, brand model, audit, error model, time, secrets, domain vs integration events, aggregate sizing rules. |
-| [`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md) | First-time setup, service ports, EF migration commands, feature template, OpenAPI/Scalar. |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Deferred work and the trigger that brings each forward. |
-| [`docs/DECISIONS.md`](docs/DECISIONS.md) | ADR-style log of architectural decisions. |
-| [`docs/DB_SCALING.md`](docs/DB_SCALING.md) | High-volume DB operations guide (reconciliation tuning, retention, partitioning cutover). |
-| [`docs/CORE_PLATFORM_MAPPING.md`](docs/CORE_PLATFORM_MAPPING.md) | Section-by-section mapping of the legacy "Core Platform" feature surface onto planned PAM modules, with the "10x better" decisions. |
+| [`ARCHITECTURE.md`](docs-fe/docs/ARCHITECTURE.md) | The **why** — module boundaries, identity model, outbox topology, domain-vs-integration events, aggregate sizing. |
+| [`LOCAL_DEV.md`](docs-fe/docs/LOCAL_DEV.md) | First-time setup, service ports, EF migration commands, feature template. |
+| [`AUTH.md`](docs-fe/docs/AUTH.md) | OpenIddict + Identity wiring, MFA, password-reset flow, permission model. |
+| [`INGEST.md`](docs-fe/docs/INGEST.md) | Vendor ingest path, idempotency, 21G + FastSpin specifics, strangler-fig phases. |
+| [`ENDPOINTS.md`](docs-fe/docs/ENDPOINTS.md) | OpenAPI annotation conventions every endpoint must follow. |
+| [`EVENTS.md`](docs-fe/docs/EVENTS.md) | Domain events, integration events, outbox flush, reconciler. |
+| [`STRESS.md`](docs-fe/docs/STRESS.md) | Stress methodology, findings, tunings, readiness assessment. |
+| [`TESTING.md`](docs-fe/docs/TESTING.md) | Unit / integration / architecture / stress conventions. |
+| [`CORE_PLATFORM_MAPPING.md`](docs-fe/docs/CORE_PLATFORM_MAPPING.md) | Section-by-section mapping of the legacy Core Platform onto planned PAM modules. |
+
+Internal docs (`docs-fe/docs/internal/` — not published):
+[`DECISIONS.md`](docs-fe/docs/internal/DECISIONS.md) (ADRs),
+[`ROADMAP.md`](docs-fe/docs/internal/ROADMAP.md),
+[`DB_SCALING.md`](docs-fe/docs/internal/DB_SCALING.md),
+[`CACHING.md`](docs-fe/docs/internal/CACHING.md),
+[`PLATFORM_HARDENING.md`](docs-fe/docs/internal/PLATFORM_HARDENING.md).
 
 ## Repository layout
 
 ```
-src/
-  Bootstrapper/Pam.Api/          ASP.NET host: DI, OTel, rate limit, health
-  Modules/<Module>/
-    Pam.<Module>/                aggregates, features, EF, module wire-up
-    Pam.<Module>.Contracts/      DTOs, IQuery<T>, integration events
-  Shared/
-    Pam.Shared/                  DDD primitives, MediatR behaviors, EF
-                                 interceptors, IClock, IUserContext
-    Pam.Shared.Contracts/        ICommand/IQuery, IDomainEvent, Actor
-    Pam.Shared.Messaging/        MassTransit registration, IntegrationEvent
+api/
+  src/
+    Bootstrapper/Pam.Api/             ASP.NET host: DI, OTel, rate limit, health
+    Modules/<Module>/
+      Pam.<Module>/                   aggregates, features, EF, module wire-up
+      Pam.<Module>.Contracts/         DTOs, IQuery<T>, integration events
+    Shared/
+      Pam.Shared/                     DDD primitives, MediatR behaviors, EF interceptors
+      Pam.Shared.Contracts/           ICommand/IQuery, IDomainEvent, Actor
+      Pam.Shared.Messaging/           MassTransit wire-up, outbox reconciler, MessagingOutboxOptions
+  tests/
+    Pam.<Module>.UnitTests/           xUnit v3 pure-domain tests
+    Pam.IntegrationTests/             Testcontainers-backed end-to-end
+    Pam.ArchitectureTests/            NetArchTest module-boundary rules
+  Makefile                            build / test / run / migrations
 tests/
-  Pam.<Module>.UnitTests/        pure-domain tests on xUnit 3
-docs/                            see table above
+  stress/                             k6 scripts (21g.js, fastspin.js)
+docs-fe/                              Docusaurus site (published + internal docs)
+Makefile                              stress workflows (root-level)
+docker-compose.yml                    full local stack (mssql, rabbit, redis, otel-lgtm, seq, mailpit)
 ```
 
 ## Adding a feature
 
-The `CreateBrand` feature in
-`src/Modules/Operators/Pam.Operators/Brands/Features/CreateBrand/` is the
-canonical template. Four files per feature: command, validator, handler,
-endpoint (+ optional domain-event handler). MediatR + FluentValidation +
-Carter all auto-discover via assembly scanning — no manual DI
-registration. Full walkthrough in
-[`docs/LOCAL_DEV.md`](docs/LOCAL_DEV.md#adding-a-feature).
+`Pam.Operators` is the canonical reference for the per-module pattern;
+`Pam.Ingest` is the reference for the vendor-adapter pattern. Each
+feature ships as four files in
+`Modules/<X>/Pam.<X>/<Aggregate>/Features/<UseCase>/`:
+
+- `<UseCase>Command.cs` — what the API receives (or `Query.cs` for reads)
+- `<UseCase>Validator.cs` — FluentValidation rules
+- `<UseCase>Handler.cs` — the actual work
+- `<UseCase>Endpoint.cs` — Carter route + OpenAPI annotations (every
+  endpoint must follow the annotation chain in
+  [`api/CLAUDE.md`](api/CLAUDE.md))
+
+MediatR + FluentValidation + Carter all auto-discover via assembly
+scanning — no manual DI registration. Full walkthrough in
+[`docs-fe/docs/LOCAL_DEV.md`](docs-fe/docs/LOCAL_DEV.md#adding-a-feature).
