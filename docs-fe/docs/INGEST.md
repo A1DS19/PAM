@@ -283,6 +283,40 @@ sequenceDiagram
     PAM-->>FastSpin: relay status + body bytes verbatim
 ```
 
+### Direction by direction
+
+Read once and the byte-for-byte rule sticks.
+
+**Inbound (FastSpin → PAM → GBS).** FastSpin signs the body with
+`MD5(body + securityKey)` and ships that hash in the `Digest` header.
+GBS recomputes the hash on receive and rejects on mismatch (`code: 2,
+msg: "Invalid Digest"`). PAM forwards the **request body bytes
+unchanged** — any re-encode (whitespace, key order, number formatting)
+would change the hash and GBS would reject the call. PAM does NOT
+validate the digest itself; that's GBS's job and PAM is intentionally
+transparent.
+
+**Outbound (GBS → PAM → FastSpin).** PAM relays GBS's **response
+bytes unchanged** back to FastSpin. Today FastSpin doesn't sign
+responses, but if they ever start, PAM is already in the right shape.
+The relay uses `context.Response.Body.WriteAsync(result.Body)` — no
+`Results.Json(...)` re-encode — for the same byte-preservation reason
+as the inbound side.
+
+**What PAM does in between.** Parses a *copy* of both bodies into a
+canonical `IngestTransactionCommand`, persists the row, captures
+`downstream_*` columns. The relay path and the persist path are
+independent — persistence happens BEFORE the relay so a PAM crash
+between the two means FastSpin gets a 500 and retries with the same
+`transferId` (which the unique index catches on the second attempt).
+The bytes themselves are never modified.
+
+So the answer to "PAM gets balance from GBS, saves a row, relays to
+GBS unchanged?" is **no**: PAM doesn't "get a balance" — it forwards
+the original request, and GBS produces the new balance as a side
+effect of executing the transfer. And PAM relays GBS's **response to
+FastSpin**, not to GBS.
+
 ### Why intercept, not translate-and-respond
 
 The `IVendorAdapter` pattern (21G, future BTCasino) translates the
@@ -329,6 +363,80 @@ msg                            →   downstream_outcome_message
 forward latency                →   downstream_latency_ms
 forward outcome                →   downstream_status
 ```
+
+### Anatomy of a captured row
+
+Walking a real row from a 2026-05-14 probe against live GBS dev
+(`$1` bonus credit on bot account `0022`):
+
+```json
+{
+  "id":                        "019E2883-93AD-7A9C-AA94-EF57B4CB839F",
+  "vendor_id":                 "fastspin",
+  "vendor_reference":          "probe-1778796171791-c8b3f1a6",
+  "brand_id":                  "9D3CD49E-8F20-0A2A-9249-A7EF39F7831E",
+  "player_id":                 "82D51B6E-F395-6279-DB4F-0F1631F73A7A",
+  "amount_cents":              100,
+  "currency":                  "USD",
+  "kind":                      "Bonus",
+  "status":                    "Received",
+  "round_id":                  "ref-1778796171791",
+  "description":               "S-RM01",
+  "occurred_at":               "2026-05-14 22:02:51 +00:00",
+  "received_at":               "2026-05-14 22:02:52.2056560 +00:00",
+  "created_by_type":           "Service",
+  "created_by_id":             "fastspin",
+  "downstream_latency_ms":     222,
+  "downstream_outcome_code":   0,
+  "downstream_outcome_message": "Success",
+  "downstream_reference":      "794558297",
+  "downstream_status":         "Forwarded",
+  "vendor_balance_after_cents": 1013200
+}
+```
+
+| Field | Source | Notes |
+|---|---|---|
+| `vendor_reference` | inbound request `transferId` | idempotency anchor — UNIQUE on `(vendor_id, vendor_reference)` |
+| `amount_cents`, `kind`, `currency`, `description` | inbound request body (`amount`, `type`, `currency`, `gameCode`) | sign on `amount_cents` applied by adapter from `type` (Risk negative, Win/Bonus positive); never trust the wire's sign |
+| `round_id` | inbound `referenceId` | |
+| `occurred_at` | inbound `transferTime` (`yyyyMMddTHHmmss` → UTC) | falls back to `received_at` if unparseable |
+| `received_at` | `IClock.UtcNow` when PAM persists | |
+| `brand_id`, `player_id` | **derived placeholders** (`SHA256(string)[:16]`) | Phase-A only; real lookup ships with `Pam.Players` `IPlayerLookup` |
+| `created_by_*`, `last_modified_*` | inline stamp `Actor(Service, "fastspin")` | better than the `Anonymous` default the audit interceptor would otherwise produce; one of the reasons IngestDbContext intentionally doesn't attach `AuditableSaveChangesInterceptor` |
+| `downstream_reference` | GBS response `merchantTxId` | GBS's `tbcasinoplaytoday.DocumentNumber` — your cross-reference back to the legacy system during the migration window |
+| `vendor_balance_after_cents` | GBS response `balance` × 100, `Math.Round(AwayFromZero)` | the rounding step is what swallows GBS's float-money noise (the wire sent `10132.000004882813`, the column shows `1013200`) |
+| `downstream_outcome_code` / `_message` | GBS response `code` / `msg` | `0 / "Success"` = clean accept; any non-zero is a vendor-level rejection captured for audit |
+| `downstream_status` | computed by `FastSpinUpstream.ForwardAsync` | see the next table |
+| `downstream_latency_ms` | stopwatch around the HttpClient call | PAM-internal measurement of the GBS round-trip; feeds the "p95 of GBS latency through PAM" SLA |
+
+### GBS rejection contracts (vendor-level errors with HTTP 200)
+
+GBS returns `HTTP 200` with a non-zero `code` field for vendor-level
+errors (account doesn't exist, insufficient balance, etc.). PAM
+captures these the same way as a success — `downstream_status =
+Forwarded`, persists a row, relays the response. The body of the row
+tells the audit story via `downstream_outcome_code` and
+`downstream_outcome_message`.
+
+Verbs use different code/message conventions for the **same root
+cause** (verified against `dev-gbs-api-dbdev` on 2026-05-14):
+
+| Verb | Cause | `code` | `msg` |
+|---|---|---|---|
+| `getBalance` | acctId unknown | `50100` | `"Acct Not Found"` |
+| `transfer`   | acctId unknown | `1`     | `"Invalid <acctId>"` |
+| `transfer`   | digest mismatch | `2`    | `"Invalid Digest"` |
+| `transfer`   | unknown / handler exception | `1` | exception message |
+
+Any logic that branches on `downstream_outcome_code` MUST handle both
+`1` and `50100` for the same business outcome. Don't assume the
+`getBalance` value transfers to `transfer`.
+
+On a rejection, GBS returns a `GeneralResp` shape (no `transferId`,
+no `merchantTxId`, no `balance`). PAM stores those captures as NULL —
+the column tells the truth that we don't know the value, instead of
+lying with `0` or empty string.
 
 ### `downstream_status` semantics
 

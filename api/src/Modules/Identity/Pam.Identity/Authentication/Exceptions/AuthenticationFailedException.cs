@@ -22,5 +22,6 @@ public sealed class AuthenticationFailedException : PamDomainException
             title: "Unauthorized",
             typeUri: "https://tools.ietf.org/html/rfc9110#section-15.5.2",
             failures: failures.Length == 0 ? [new ValidationFailure("_", detail)] : failures
-        ) { }
+        )
+    { }
 }

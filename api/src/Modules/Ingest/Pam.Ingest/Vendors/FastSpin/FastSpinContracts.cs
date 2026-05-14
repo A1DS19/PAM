@@ -44,12 +44,19 @@ public sealed record FastSpinSpecialGame(string? type, int count, int sequence);
 // columns. Note `balance` is a double on the wire (a money value scaled
 // 1:1 to currency units, e.g. 1050.15 = €1050.15); we multiply by 100 to
 // store as signed cents alongside AmountCents.
+//
+// `balance` is nullable on purpose. On vendor-level rejections (e.g.
+// code=1 "Invalid acctId") GBS replies with a GeneralResp shape that
+// omits balance entirely; the JSON deserializer would otherwise leave
+// it at 0.0, and we'd persist "the player has $0" — which is a lie.
+// Nullable means a missing field stays null and the captured row tells
+// the truth: we don't know the balance.
 public sealed record FastSpinTransferResponse
 {
     public string? transferId { get; init; }
     public string? merchantTxId { get; init; }
     public string? acctId { get; init; }
-    public double balance { get; init; }
+    public double? balance { get; init; }
     public int code { get; init; }
     public string? msg { get; init; }
     public string? serialNo { get; init; }

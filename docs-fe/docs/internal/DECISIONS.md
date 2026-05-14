@@ -9,6 +9,75 @@ Rough ADR shape, kept terse. Order is reverse-chronological.
 
 ---
 
+## 30. `FastSpinTransferResponse.balance` is nullable — 2026-05-14
+
+**Context.** A 100-call mixed-acctId probe against live `gbs-dev`
+(50/50 existing-vs-missing accounts, transfer types 1/4/7) surfaced a
+silent data-quality bug: every rejection row landed in
+`ingest.vendor_transactions` with `vendor_balance_after_cents = 0`
+when the player's actual balance was unknown.
+
+Root cause was a chain through three layers:
+
+1. On vendor-level rejection (`code=1, msg="Invalid <acctId>"`), GBS
+   replies with a `GeneralResp`-shaped body (no `transferId`, no
+   `merchantTxId`, no `balance` field). HTTP is still `200`, body is
+   valid JSON.
+2. `System.Text.Json` happily deserializes the partial body into
+   `FastSpinTransferResponse`. Missing fields land at their C# default
+   — for `public double balance`, that's `0.0`.
+3. `FastSpinAdapter.ExtractCommand` had `response is null ? null :
+   ToCents(response.balance)`. Since `response` is non-null, it
+   computed `ToCents(0.0) = 0` and persisted that.
+
+End result: the audit log told a confident lie. A rejection row
+showed `vendor_balance_after_cents = 0`, which a future incident
+responder would naturally read as "the player has $0" — when the
+truth is "we have no idea, GBS didn't tell us."
+
+This affected only the `transfer` verb (the only one that persists);
+`getBalance` is forward-only.
+
+**Decision.** Make `balance` nullable on `FastSpinTransferResponse`
+and key the adapter off it:
+
+```csharp
+public double? balance { get; init; }   // was: double
+
+VendorBalanceAfterCents: response?.balance is null
+    ? null
+    : ToCents(response.balance.Value),
+```
+
+`System.Text.Json` populates a missing field on a nullable as `null`
+(distinct from "present and 0"), so the rejection path stays honest:
+the column is `NULL`, the success path is unchanged. The
+`vendor_balance_after_cents` SQL column was already nullable; no
+migration needed.
+
+**Consequences.**
+
+- The audit log distinguishes "balance unknown" (rejection) from
+  "balance is zero" (legitimate `0.0` after a transaction that
+  zeroed the wallet). Reports that aggregate the column for live-
+  player balances must filter `IS NOT NULL`, not just sum.
+- A regression test guards the column-level invariant — every
+  rejection row must have `vendor_balance_after_cents IS NULL`. Lives
+  inside the `tests/probes/fastspin-batch.mjs` summary, runs on any
+  probe pass. Future format drift on the GBS side that silently
+  populates `balance` on rejections would flag.
+- Any future intercept-pattern vendor adapter should follow the same
+  convention: nullable numerics by default, fail closed by emitting
+  `NULL` for unobserved values. The 21G translate-pattern adapter
+  is unaffected — it owns the response, no upstream-omission case.
+
+**Discovered via** `tests/probes/fastspin-batch.mjs` — 100-call mixed
+probe. Fix shipped same day. Rejection contract for both verbs
+(`code=1` for transfer, `code=50100` for getBalance) documented
+inline in `docs/INGEST.md` under "GBS rejection contracts".
+
+---
+
 ## 29. Outbox reconciler scans via SQL `LEFT JOIN`, not in-memory diff — 2026-05-13
 
 **Context.** ADR #28 introduced `IOutboxReconciler` as the backstop for

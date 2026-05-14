@@ -121,7 +121,9 @@ public static class FastSpinAdapter
             OccurredAt: occurredAt,
             RoundId: request.referenceId,
             Description: request.gameCode,
-            VendorBalanceAfterCents: response is null ? null : ToCents(response.balance),
+            VendorBalanceAfterCents: response?.balance is null
+                ? null
+                : ToCents(response.balance.Value),
             DownstreamReference: response?.merchantTxId,
             DownstreamOutcomeCode: response?.code,
             DownstreamOutcomeMessage: response?.msg,
