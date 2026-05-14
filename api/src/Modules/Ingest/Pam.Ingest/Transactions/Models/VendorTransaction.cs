@@ -43,6 +43,33 @@ public sealed class VendorTransaction : Aggregate<Guid>
 
     public string? RejectedReason { get; private set; }
 
+    // ---- Phase-A intercept capture (filled by FastSpinAdapter when PAM
+    // forwards to GBS; null for vendors that don't use the intercept
+    // pattern). See DownstreamStatus for the semantics. ----
+
+    // Player's balance after the transaction, as reported by upstream.
+    // Signed cents in a bigint column — same convention as AmountCents.
+    // Null when no response was captured (UpstreamTimeout/Unreachable).
+    public long? VendorBalanceAfterCents { get; private set; }
+
+    // GBS DocumentNumber / merchantTxId — the upstream's own primary
+    // key for this transaction. Lets reports cross-reference back into
+    // tbcasinoplaytoday during the strangler-fig window.
+    public string? DownstreamReference { get; private set; }
+
+    // Upstream's `code` field (0 = success, anything else = vendor-level
+    // rejection at GBS — bad currency, insufficient balance, etc.).
+    public int? DownstreamOutcomeCode { get; private set; }
+
+    public string? DownstreamOutcomeMessage { get; private set; }
+
+    public DownstreamStatus DownstreamStatus { get; private set; }
+
+    // Wall-clock time of the forward in milliseconds — feeds SLA
+    // dashboards ("p95 of GBS latency through PAM"). Null when no
+    // forward was attempted (NotApplicable) or wasn't measurable.
+    public int? DownstreamLatencyMs { get; private set; }
+
     private VendorTransaction() { }
 
     public static VendorTransaction Record(
@@ -57,7 +84,18 @@ public sealed class VendorTransaction : Aggregate<Guid>
         DateTimeOffset occurredAt,
         DateTimeOffset receivedAt,
         string? roundId = null,
-        string? description = null
+        string? description = null,
+        // Phase-A intercept fields. Defaults preserve existing
+        // non-intercept call sites (21G, tests, future authoritative
+        // vendors) — they create rows with DownstreamStatus.NotApplicable
+        // and all downstream_* columns null. Intercept callers
+        // (FastSpinAdapter) pass real values.
+        long? vendorBalanceAfterCents = null,
+        string? downstreamReference = null,
+        int? downstreamOutcomeCode = null,
+        string? downstreamOutcomeMessage = null,
+        DownstreamStatus downstreamStatus = DownstreamStatus.NotApplicable,
+        int? downstreamLatencyMs = null
     )
     {
         var tx = new VendorTransaction
@@ -75,6 +113,12 @@ public sealed class VendorTransaction : Aggregate<Guid>
             ReceivedAt = receivedAt,
             RoundId = roundId,
             Description = description,
+            VendorBalanceAfterCents = vendorBalanceAfterCents,
+            DownstreamReference = downstreamReference,
+            DownstreamOutcomeCode = downstreamOutcomeCode,
+            DownstreamOutcomeMessage = downstreamOutcomeMessage,
+            DownstreamStatus = downstreamStatus,
+            DownstreamLatencyMs = downstreamLatencyMs,
         };
 
         // Inline audit stamp — IngestDbContext does NOT register

@@ -19,12 +19,13 @@ participate in the load.
 | Setting | Why |
 |---|---|
 | `RateLimiting:Enabled=false` | The `api-default` 100 req / 30s limiter would dominate the numbers. Policies become no-op partitions; endpoint chains stay valid. |
-| `Stress:DiscardConsumers:Enabled=true` | Binds no-op `IConsumer<…>` instances in `Pam.Notifications.Stress` so RabbitMQ allocates queues for integration events. Without them, messages route-and-drop at the exchange and you can't observe queue depth. |
+| `Stress:FastSpinUpstreamStub:Enabled=true` | Swaps the GBS-forwarding `FastSpinUpstream` for `StubFastSpinUpstream`, which returns a canned 200 with no outbound HTTP. Without it, `fastspin.js` would generate load on the real dev GBS and the numbers would be dominated by their network. |
 | `Messaging:Reconciliation:Interval=00:01:00` | Drops the 5-min default so reconciler behaviour is observable during a 2-3 minute run. `MinAge` drops to 30s for the same reason. |
 
-Production never sees these — the discard consumers stay out of the
-MassTransit registration via the consumer-type filter in
-`AddPamMassTransit`.
+The integration-event discard subscribers in
+`Pam.Notifications.Subscribers` are registered in **every** environment
+— they bind a queue to the exchange so events are observable / replayable
+even before a real consumer ships. No flag required.
 
 ## Running
 
@@ -41,6 +42,7 @@ make stress-api
 make stress-reset
 make stress-21g                       # default: VUS=50 DURATION=90s
 make stress-21g VUS=100 DURATION=3m   # turn it up
+make stress-fastspin                  # same shape, intercept path
 ```
 
 The k6 summary lands at `tests/stress/stress-summary.json` and prints a
@@ -63,8 +65,15 @@ the API's OTel metrics in real time.
 
 ## Scenarios
 
-`21g.js` runs the fresh-insert path. To exercise other shapes, clone
-the file and change the payload generator:
+`21g.js` runs the fresh-insert path against the 21G REST adapter.
+`fastspin.js` runs the same fresh-insert shape against the FastSpin
+Phase-A intercept endpoint (`/v1/ingest/vendors/fastspin/main`). The
+intercept normally forwards every request to GBS; in Stress mode the
+upstream is replaced with `StubFastSpinUpstream` (a canned 200), so
+the measurement stays on PAM's hot path: HTTP → adapter → handler →
+COMMIT #1 → COMMIT #2 → outbox delivery.
+
+To exercise other shapes, clone the file and change the payload generator:
 
 - **Idempotent retries:** reuse a fixed pool of references. Expect
   ~1× `pam_accepted` followed by sustained `pam_duplicates`.

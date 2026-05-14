@@ -146,6 +146,32 @@ fires per command.
 
 ## Deferred — pinned, will land when triggered
 
+### Additional vendor adapters in `Pam.Ingest`
+
+Decided 2026-05-13: **Kingdom Casino (FastSpin)** is the Phase-A reference
+vendor in PAM (replaces the original 21G/Simple Wallet choice — 21G has no
+working QA endpoint right now). Three more casinos have been triaged for
+follow-on adapters. Docs live in `~/Downloads/casinos/` for the
+current planning window.
+
+| Casino | Provider | Wire shape | Doc | QA endpoint |
+|---|---|---|---|---|
+| **Kingdom** | FastSpin | POST single `/main` endpoint, `API`/`Digest` headers, JSON or XML body | `FastSpin API v1.5.pdf` | http://api-egame-staging.fsuat.com/api |
+| Galaxy | VegasSoft | JSON-RPC 2.0 over HTTPS, api_key + secret_key | `VS Aggregator Integration v1.6.2.pdf` | https://staging-ag-api.vegassoftware.com/ |
+| Treasure | Mancala | REST POST per verb (`/Balance`, `/Credit`, `/Debit`, `/Refund`), MD5 of method+body+API_KEY in body | `Mancala API Doc V2.0.1.pdf` | https://develop-partner.api.perfecttlos.com |
+| Deluxe | Betsoft (BSG) | Common Wallet (JSON OR XML over HTTPS), passkey-based signing | `docs.betsoft.com` (pwd in Slack) | https://l99-gp3.discreetgaming.com/ |
+
+All four are seamless-wallet integrations: operator owns the balance, the
+casino calls the operator on every bet/win. The verb set is universal
+(Balance / Bet / Win / Refund); only the wire shape, signing scheme, and
+idempotency anchor vary. PAM's `IVendorAdapter` abstraction handles the
+wire-shape difference — adding each follow-on casino is roughly one day
+of adapter work plus per-vendor auth testing.
+
+**Order**: ship Kingdom first as the new Phase-A reference. Galaxy, Treasure,
+Deluxe added in priority order driven by traffic share once Kingdom is
+live in QA.
+
 ### `Pam.Identity` (OpenIddict + ASP.NET Core Identity)
 
 Embedded auth module. OpenIddict `AddServer` configured for Authorization

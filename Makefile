@@ -1,4 +1,4 @@
-.PHONY: help stress-up stress-down stress-api stress-reset stress-21g
+.PHONY: help stress-up stress-down stress-api stress-reset stress-21g stress-fastspin
 
 # Root-level Make targets. The .NET Makefile (build, test, migrations,
 # dev-api) lives under api/. The targets here orchestrate cross-cutting
@@ -15,6 +15,7 @@ help:
 	@echo "  make stress-api        - run Pam.Api in Stress mode (foreground)"
 	@echo "  make stress-reset      - TRUNCATE ingest + outbox + audit tables"
 	@echo "  make stress-21g        - run k6 against /v1/ingest/vendors/21g"
+	@echo "  make stress-fastspin   - run k6 against /v1/ingest/vendors/fastspin/main"
 	@echo "                           env: VUS=<n> DURATION=<k6 dur> BASE_URL=<url>"
 
 stress-up:
@@ -64,3 +65,15 @@ stress-21g:
 		--env VUS=$(VUS) \
 		--env DURATION=$(DURATION) \
 		tests/stress/21g.js
+
+# Run the FastSpin (Kingdom Casino) intercept stress scenario. The API must
+# be running in Stress mode so Stress:FastSpinUpstreamStub:Enabled swaps
+# the GBS forward for a no-op fake — otherwise every request would hit
+# the real dev GBS endpoint and dominate the numbers.
+stress-fastspin:
+	@command -v k6 >/dev/null 2>&1 || { echo "k6 not on PATH — brew install k6" >&2; exit 1; }
+	k6 run \
+		--env BASE_URL=$(BASE_URL) \
+		--env VUS=$(VUS) \
+		--env DURATION=$(DURATION) \
+		tests/stress/fastspin.js

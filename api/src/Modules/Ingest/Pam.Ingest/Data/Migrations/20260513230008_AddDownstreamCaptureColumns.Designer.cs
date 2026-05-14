@@ -3,6 +3,7 @@ using System;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Pam.Ingest.Data;
 
@@ -11,9 +12,11 @@ using Pam.Ingest.Data;
 namespace Pam.Ingest.Data.Migrations
 {
     [DbContext(typeof(IngestDbContext))]
-    partial class IngestDbContextModelSnapshot : ModelSnapshot
+    [Migration("20260513230008_AddDownstreamCaptureColumns")]
+    partial class AddDownstreamCaptureColumns
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

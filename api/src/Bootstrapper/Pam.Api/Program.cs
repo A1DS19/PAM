@@ -21,6 +21,7 @@ using Pam.Shared.Exceptions.Handlers;
 using Pam.Shared.Extensions;
 using Pam.Shared.Http;
 using Pam.Shared.Messaging.Extensions;
+using Pam.Shared.Messaging.Outbox;
 using Pam.Shared.Messaging.Reconciliation;
 using Pam.Wallet;
 using RedisRateLimiting;
@@ -66,21 +67,20 @@ builder.Services.AddPamMediatR(moduleAssemblies);
 // no per-module ConfigureOutbox hooks. See docs/DECISIONS.md ADR on the
 // outbox topology.
 //
-// Stress:DiscardConsumers:Enabled gates the no-op stress consumers in
-// Pam.Notifications.Stress. Off everywhere except ASPNETCORE_ENVIRONMENT=
-// Stress, so production never binds a queue to a discard sink.
-var stressDiscardConsumersEnabled = builder.Configuration.GetValue(
-    "Stress:DiscardConsumers:Enabled",
-    false
+// MessagingOutboxOptions is bound here (host has the configuration
+// binder) and passed in so MassTransit can capture the values at
+// AddEntityFrameworkOutbox registration time. Same Configure() call
+// also makes IOptions<MessagingOutboxOptions> available downstream.
+var outboxOptions =
+    builder
+        .Configuration.GetSection(MessagingOutboxOptions.SectionName)
+        .Get<MessagingOutboxOptions>() ?? new MessagingOutboxOptions();
+builder.Services.Configure<MessagingOutboxOptions>(
+    builder.Configuration.GetSection(MessagingOutboxOptions.SectionName)
 );
-Func<Type, bool>? consumerFilter = stressDiscardConsumersEnabled
-    ? null
-    : t =>
-        !string.Equals(t.Namespace, "Pam.Notifications.Stress", StringComparison.Ordinal)
-        && t.Namespace?.StartsWith("Pam.Notifications.Stress.", StringComparison.Ordinal) != true;
 builder.Services.AddPamMassTransit(
     builder.Configuration,
-    consumerFilter,
+    outboxOptions,
     typeof(NotificationsModule).Assembly
 );
 

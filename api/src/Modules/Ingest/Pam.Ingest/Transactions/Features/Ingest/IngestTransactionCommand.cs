@@ -27,7 +27,17 @@ public sealed record IngestTransactionCommand(
     TransactionKind Kind,
     DateTimeOffset OccurredAt,
     string? RoundId = null,
-    string? Description = null
+    string? Description = null,
+    // Phase-A intercept capture. Populated only when the vendor uses
+    // the forward-and-record pattern (FastSpin); null/NotApplicable for
+    // direct-ingest vendors (21G today). The handler passes these
+    // through to VendorTransaction.Record unchanged.
+    long? VendorBalanceAfterCents = null,
+    string? DownstreamReference = null,
+    int? DownstreamOutcomeCode = null,
+    string? DownstreamOutcomeMessage = null,
+    DownstreamStatus DownstreamStatus = DownstreamStatus.NotApplicable,
+    int? DownstreamLatencyMs = null
 ) : ICommand<IngestTransactionResult>, IUnauditedCommand;
 
 // Returned to the adapter so it can craft the vendor-shaped response.

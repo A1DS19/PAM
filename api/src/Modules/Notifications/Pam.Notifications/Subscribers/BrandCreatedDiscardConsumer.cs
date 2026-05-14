@@ -2,17 +2,18 @@ using MassTransit;
 using Microsoft.Extensions.Logging;
 using Pam.Operators.Contracts.Brands.IntegrationEvents;
 
-namespace Pam.Notifications.Stress;
+namespace Pam.Notifications.Subscribers;
 
-// Stress-test-only sink for BrandCreated. See
-// TransactionIngestedDiscardConsumer for the full rationale.
+// Placeholder subscriber for BrandCreatedIntegrationEvent. See
+// TransactionIngestedDiscardConsumer for the full rationale — same
+// pattern, different event.
 public sealed class BrandCreatedDiscardConsumer(ILogger<BrandCreatedDiscardConsumer> logger)
     : IConsumer<BrandCreatedIntegrationEvent>
 {
     public Task Consume(ConsumeContext<BrandCreatedIntegrationEvent> context)
     {
         logger.LogDebug(
-            "[stress] discarded BrandCreatedIntegrationEvent {BrandId}",
+            "Discarded BrandCreatedIntegrationEvent {BrandId}",
             context.Message.BrandId
         );
         return Task.CompletedTask;

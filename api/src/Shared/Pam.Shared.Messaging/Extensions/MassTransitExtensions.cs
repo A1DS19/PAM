@@ -6,6 +6,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Pam.Shared.Messaging.Behaviors;
 using Pam.Shared.Messaging.Data;
+using Pam.Shared.Messaging.Outbox;
 using Pam.Shared.Messaging.Reconciliation;
 
 namespace Pam.Shared.Messaging.Extensions;
@@ -27,7 +28,7 @@ public static class MassTransitExtensions
     public static IServiceCollection AddPamMassTransit(
         this IServiceCollection services,
         IConfiguration configuration,
-        Func<Type, bool>? consumerFilter,
+        MessagingOutboxOptions outboxOptions,
         params Assembly[] consumerAssemblies
     )
     {
@@ -81,19 +82,7 @@ public static class MassTransitExtensions
 
             if (consumerAssemblies.Length > 0)
             {
-                if (consumerFilter is null)
-                {
-                    x.AddConsumers(consumerAssemblies);
-                }
-                else
-                {
-                    // MT applies the filter at registration time — types
-                    // returning false are not registered at all, so no
-                    // receive endpoint or queue gets declared for them.
-                    // This is how stress-only discard consumers stay out
-                    // of dev/prod wire-up.
-                    x.AddConsumers(consumerFilter, consumerAssemblies);
-                }
+                x.AddConsumers(consumerAssemblies);
             }
 
             // Single bus-wide outbox registration on the shared messaging
@@ -112,30 +101,11 @@ public static class MassTransitExtensions
                 o.UseSqlServer();
                 o.UseBusOutbox(bo =>
                 {
-                    // MessageDeliveryLimit caps the rows the delivery
-                    // service pulls per iteration. Default is 100, which
-                    // tops out around 600-700 msg/sec on local hardware
-                    // — fine for current dev load, but observed in
-                    // stress runs to be the drain-rate ceiling once
-                    // foreground publish rate matches it. 1000/batch
-                    // gives ~5-10x headroom for sustained-burst drain
-                    // without changing the steady-state cost.
-                    bo.MessageDeliveryLimit = 1000;
-
-                    // Per-batch wall-clock budget for the publish loop.
-                    // Larger batch needs proportionally more time to
-                    // round-trip through Rabbit; 30s is generous enough
-                    // that even a slow broker doesn't time out mid-batch.
-                    bo.MessageDeliveryTimeout = TimeSpan.FromSeconds(30);
+                    bo.MessageDeliveryLimit = outboxOptions.MessageDeliveryLimit;
+                    bo.MessageDeliveryTimeout = outboxOptions.MessageDeliveryTimeout;
                 });
-
-                // QueryDelay is the IDLE poll cadence — when there's
-                // nothing to deliver. Active sends are woken immediately
-                // by BusOutboxNotification, so this only sets the upper
-                // bound on post-restart delivery latency for messages
-                // left in the outbox by a previous process.
-                o.QueryDelay = TimeSpan.FromSeconds(60);
-                o.DuplicateDetectionWindow = TimeSpan.FromMinutes(30);
+                o.QueryDelay = outboxOptions.QueryDelay;
+                o.DuplicateDetectionWindow = outboxOptions.DuplicateDetectionWindow;
             });
 
             x.UsingRabbitMq(

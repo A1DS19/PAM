@@ -43,9 +43,7 @@ public static class IngestModule
         services.AddDbContext<IngestDbContext>(
             (sp, options) =>
             {
-                options.AddInterceptors(
-                    sp.GetRequiredService<DispatchDomainEventsInterceptor>()
-                );
+                options.AddInterceptors(sp.GetRequiredService<DispatchDomainEventsInterceptor>());
                 options.UseSqlServer(
                     connectionString,
                     sql =>
@@ -62,6 +60,55 @@ public static class IngestModule
         // when wiring a new vendor. Scoped because the adapter may resolve
         // scoped services (IPlayerLookup once Players ships).
         services.AddScoped<TwentyOneGAdapter>();
+        // FastSpinAdapter is a static utility today (no scoped deps);
+        // promote to a scoped registration when IPlayerLookup gets injected.
+
+        // FastSpin upstream — typed HttpClient that PAM uses to forward
+        // intercepted FastSpin wallet calls to GBS unchanged. The
+        // BaseAddress is the full URL of GBS's /api/fastspin/main; PAM
+        // POSTs the raw inbound body to it byte-for-byte to preserve the
+        // vendor's MD5(body+securityKey) Digest signature.
+        //
+        // Stress runs flip Stress:FastSpinUpstreamStub:Enabled=true to
+        // swap in StubFastSpinUpstream, which returns a canned 200
+        // without any outbound HTTP. UpstreamUrl validation is skipped
+        // in that mode so a missing config doesn't fail-fast.
+        var fastSpinStubEnabled = configuration.GetValue(
+            "Stress:FastSpinUpstreamStub:Enabled",
+            false
+        );
+        if (fastSpinStubEnabled)
+        {
+            services.AddSingleton<
+                Vendors.FastSpin.IFastSpinUpstream,
+                Vendors.FastSpin.Stress.StubFastSpinUpstream
+            >();
+        }
+        else
+        {
+            services
+                .AddOptions<Vendors.FastSpin.FastSpinUpstreamOptions>()
+                .Bind(
+                    configuration.GetSection(Vendors.FastSpin.FastSpinUpstreamOptions.SectionName)
+                )
+                .Validate(
+                    o => !string.IsNullOrWhiteSpace(o.UpstreamUrl),
+                    "Ingest:Vendors:FastSpin:UpstreamUrl is required when the FastSpin adapter is wired."
+                )
+                .ValidateOnStart();
+            services.AddHttpClient<
+                Vendors.FastSpin.IFastSpinUpstream,
+                Vendors.FastSpin.FastSpinUpstream
+            >(
+                (sp, client) =>
+                {
+                    var opts =
+                        sp.GetRequiredService<Microsoft.Extensions.Options.IOptions<Vendors.FastSpin.FastSpinUpstreamOptions>>().Value;
+                    client.BaseAddress = new Uri(opts.UpstreamUrl);
+                    client.Timeout = TimeSpan.FromSeconds(opts.TimeoutSeconds);
+                }
+            );
+        }
 
         // SoapCore — required once for the host to serve SOAP envelopes.
         // The per-endpoint mapping happens in UseIngestSoapEndpoints below.

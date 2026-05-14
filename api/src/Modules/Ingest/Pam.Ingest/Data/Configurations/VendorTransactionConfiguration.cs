@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Metadata.Builders;
+using Pam.Ingest.Contracts.Transactions.Models;
 using Pam.Ingest.Transactions.Models;
 
 namespace Pam.Ingest.Data.Configurations;
@@ -40,6 +41,21 @@ public sealed class VendorTransactionConfiguration : IEntityTypeConfiguration<Ve
         builder.Property(t => t.ReceivedAt).IsRequired();
 
         builder.Property(t => t.RejectedReason).HasMaxLength(64);
+
+        // Phase-A intercept capture columns. All nullable except
+        // downstream_status, which defaults to NotApplicable so legacy
+        // rows + non-intercept vendors land cleanly without backfill.
+        builder.Property(t => t.VendorBalanceAfterCents);
+        builder.Property(t => t.DownstreamReference).HasMaxLength(64);
+        builder.Property(t => t.DownstreamOutcomeCode);
+        builder.Property(t => t.DownstreamOutcomeMessage).HasMaxLength(256);
+        builder
+            .Property(t => t.DownstreamStatus)
+            .HasConversion<string>()
+            .HasMaxLength(24)
+            .IsRequired()
+            .HasDefaultValue(DownstreamStatus.NotApplicable);
+        builder.Property(t => t.DownstreamLatencyMs);
 
         // The idempotency guarantee. A vendor retrying with the same
         // (vendor_id, vendor_reference) trips this unique index; the

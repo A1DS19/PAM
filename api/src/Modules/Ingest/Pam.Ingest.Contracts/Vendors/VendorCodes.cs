@@ -10,6 +10,7 @@ namespace Pam.Ingest.Contracts.Vendors;
 public static class VendorCodes
 {
     public const string TwentyOneG = "21g";
+    public const string FastSpin = "fastspin";
     public const string BTCasino = "btcasino";
     public const string Vegas = "vegas";
     public const string WNet = "wnet";

@@ -39,6 +39,13 @@ description          varchar(250) NULL
 occurred_at          datetimeoffset      vendor-reported event time
 received_at          datetimeoffset      IClock.UtcNow when we wrote it
 rejected_reason      varchar(64) NULL
+-- Phase-A intercept capture (null/NotApplicable for direct-ingest vendors)
+vendor_balance_after_cents  bigint NULL          balance returned by upstream
+downstream_reference        varchar(64) NULL     upstream's own tx id (e.g. GBS DocumentNumber)
+downstream_outcome_code     int NULL             upstream's response code
+downstream_outcome_message  varchar(256) NULL    upstream's response message
+downstream_status           varchar(24)          NotApplicable | Forwarded | UpstreamError | UpstreamTimeout | UpstreamUnreachable
+downstream_latency_ms       int NULL             wall-clock forward time
 -- audit columns
 
 UNIQUE (vendor_id, vendor_reference)             ix_vendor_transactions_idempotency
@@ -244,6 +251,142 @@ content (`TwentyOneGReferenceHasher`, SHA-256) into `vendor_reference`.
 Signed cents derived from `tranCode` (`D` → negative). `OccurredAt`
 parsed from `dailyFigureDate_YYYYMMDD`.
 
+## Kingdom Casino (FastSpin) — Phase-A intercept
+
+The Phase-A reference vendor as of 2026-05-13 (replacing 21G — which has
+no working QA endpoint right now and stays in the codebase as the SOAP
+example). FastSpin is also the first vendor on the **intercept**
+pattern: PAM sits transparently between FastSpin and GBS, captures both
+directions, and relays GBS's response byte-for-byte. GBS remains the
+wallet authority; PAM observes and persists for reporting.
+
+### Flow
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant FastSpin
+    participant PAM as Pam.Api<br/>(FastSpinInterceptEndpoint)
+    participant Upstream as IFastSpinUpstream<br/>(HttpClient)
+    participant GBS as GBS<br/>/api/fastspin/main
+    participant DB as ingest.vendor_transactions
+
+    FastSpin->>PAM: POST /v1/ingest/vendors/fastspin/main<br/>(API: transfer, Digest: MD5(body+key))
+    PAM->>PAM: EnableBuffering, read body once
+    PAM->>Upstream: ForwardAsync(request, body)
+    Upstream->>GBS: POST (raw bytes, raw headers)
+    GBS-->>Upstream: 200 {balance, merchantTxId, code, msg}
+    Upstream-->>PAM: FastSpinUpstreamResult(status, body, contentType, latencyMs, Forwarded)
+    PAM->>PAM: FastSpinAdapter.ExtractCommand(requestBytes, responseBytes, outcome, latencyMs)
+    PAM->>DB: IngestTransactionCommand → handler → INSERT
+    Note over DB: row carries BOTH request + response fields<br/>downstream_status = Forwarded
+    PAM-->>FastSpin: relay status + body bytes verbatim
+```
+
+### Why intercept, not translate-and-respond
+
+The `IVendorAdapter` pattern (21G, future BTCasino) translates the
+vendor's payload to the canonical command and PAM **owns** the
+response. That's the right shape for Phase C, when PAM is the wallet
+authority. FastSpin is **Phase A**: GBS still owns the wallet; PAM is
+inserting itself in the wire for observability without changing what
+the vendor sees. Two contracts:
+
+| | 21G adapter (translate) | FastSpin intercept (proxy) |
+|---|---|---|
+| PAM's role | Sole responder | Transparent observer |
+| Response source | PAM builds it | GBS produces it; PAM relays bytes |
+| Body re-encoded? | Yes (canonical → vendor shape) | No (would break vendor's `Digest` signature) |
+| Persistence trigger | Always (every accepted vendor call) | `transfer` only — `getBalance` is forwarded + relayed, no row |
+
+PAM does NOT validate FastSpin's `Digest: MD5(body+securityKey)`
+header — that responsibility stays at GBS. PAM is deliberately
+transparent; re-signing or re-encoding the body would break the
+contract.
+
+### Wire-shape mapping
+
+```
+FastSpin transfer body         →   IngestTransactionCommand
+─────────────────────────────────  ──────────────────────────────────────
+transferId                     →   VendorReference (idempotency anchor)
+acctId                         →   PlayerId (via IPlayerLookup; placeholder today)
+amount (double, currency units)→   AmountCents (signed; sign from type)
+type=1 (place bet)             →   Kind = Risk, AmountCents negative
+type=2 (cancel bet)            →   Kind = Risk, AmountCents negative
+type=4 (payout)                →   Kind = Win,  AmountCents positive
+type=7 (bonus payout)          →   Kind = Bonus,AmountCents positive
+gameCode                       →   Description
+referenceId                    →   RoundId
+transferTime "yyyyMMddTHHmmss" →   OccurredAt (UTC)
+
+GBS transfer response          →   downstream_* columns
+─────────────────────────────────  ──────────────────────────────────────
+balance (double, units)        →   vendor_balance_after_cents (×100)
+merchantTxId                   →   downstream_reference (GBS's tbcasinoplaytoday.id)
+code                           →   downstream_outcome_code
+msg                            →   downstream_outcome_message
+forward latency                →   downstream_latency_ms
+forward outcome                →   downstream_status
+```
+
+### `downstream_status` semantics
+
+| Value | What it means | Persisted? | Status relayed to FastSpin |
+|---|---|---|---|
+| `Forwarded` | GBS responded (any code); response captured | Yes (transfer only) | GBS's actual status (typically 200 with code in body) |
+| `UpstreamError` | GBS returned 5xx | Yes | 5xx (relayed unchanged) |
+| `UpstreamTimeout` | No response within budget | Yes — we know we *received* it | 503 |
+| `UpstreamUnreachable` | Network failure, never reached GBS | **No** — claiming "we received and processed it" would be false | 502 |
+| `NotApplicable` | Vendor doesn't use intercept (21G today) | Yes | n/a |
+
+The `UpstreamUnreachable` non-persist case is deliberate: PAM can't
+honestly claim the call was processed if we couldn't even reach the
+upstream. FastSpin retries with the same `transferId`, and on the
+retry that lands at GBS we persist with `Forwarded`.
+
+### Config
+
+```json
+{
+  "Ingest": {
+    "Vendors": {
+      "FastSpin": {
+        "UpstreamUrl": "https://dev-gbs-api-dbdev.lucky99.eu/fastspin/api/fastspin/main",
+        "TimeoutSeconds": 30
+      }
+    }
+  }
+}
+```
+
+`UpstreamUrl` is validated at startup (`ValidateOnStart` — missing or
+empty fails the host build with a clear message rather than silently
+forwarding nowhere).
+
+### Idempotency under intercept
+
+Two independent idempotency tiers, on the same `transferId`:
+
+1. **PAM:** `(vendor_id, vendor_reference)` UNIQUE index on
+   `ingest.vendor_transactions`. Insert-first; `DbUpdateException`
+   with SQL error 2627/2601 → return Duplicate with the original row's id.
+2. **GBS:** `tbcasinoplaytoday.Reference` UNIQUE. Returns its existing
+   `DocumentNumber` with `TranStatus='D'` on retry.
+
+A retry from FastSpin first re-runs through PAM's idempotency check
+(would return the existing row's id). Or if the FIRST attempt persisted
+but PAM crashed before relaying, the SECOND forward hits GBS, GBS
+returns the same `DocumentNumber`, and PAM's insert collides on the
+unique index. Either way: one PAM row, one GBS row, one logical event.
+
+A subtle case: if the FIRST forward got `UpstreamTimeout` (persisted
+with timeout status) and the SECOND succeeds (`Forwarded`), the
+existing PAM row stays as `UpstreamTimeout` — we don't upgrade the
+status on retry. The `downstream_reference` from the successful retry
+lives in GBS's row instead. Acceptable for Phase A; revisit if it
+matters operationally.
+
 ## Smoke test
 
 ```bash
@@ -300,16 +443,17 @@ docker exec pam-rabbitmq rabbitmqctl list_exchanges name type | grep Pam.Ingest.
 | `TransactionIngestedDomainEvent` + bridge → `TransactionIngestedIntegrationEvent` |
 | Bus-wide outbox on `PamMessagingDbContext`, `OutboxFlushBehavior`, `IngestOutboxReconciler` (5-min) |
 | Weekly partitioning + `PartitionMaintenanceService` (daily) |
-| 21G SoapCore listener at GBS URL paths, mounted before auth |
+| 21G SoapCore listener at GBS URL paths, mounted before auth (kept as the SOAP reference; QA endpoint is offline) |
 | `TwentyOneGReferenceHasher` (SHA-256 content idempotency, signed cents, `yyyyMMdd` parsing) |
+| **FastSpin (Kingdom Casino) intercept** — `FastSpinInterceptEndpoint`, `IFastSpinUpstream` (typed HttpClient), `FastSpinAdapter`, full intercept-and-forward with combined-fields persistence |
+| `downstream_*` capture columns on `vendor_transactions` (vendor_balance_after, downstream_reference, outcome code/msg, status, latency) |
 
 | Not built | Trigger |
 |---|---|
-| `IGbsRelay` forwarder (intercept-and-forward proxy) | Required before flipping vendor DNS to PAM |
-| Real vendor auth (validate `systemID` + `systemPassword` against `ingest.vendor_credentials`) | Before live 21G traffic |
+| Real vendor auth at PAM edge (when we stop being transparent on the Digest header) | When IP allowlist alone is insufficient |
 | `IPlayerLookup` from `Pam.Players.Contracts` | Players module ships |
-| Schema cleanup: nullable `BrandId`/`PlayerId`; `vendor_customer_id`, `daily_figure_date`, `gbs_reference` cols | Once Players + IGbsRelay exist |
-| Other vendor adapters (BTCasino, Vegas, WNet, Pocket) | Per-vendor Phase A rollout |
+| Schema cleanup: nullable `BrandId`/`PlayerId`; `vendor_customer_id`, `daily_figure_date`, `gbs_reference` cols | Once Players ships |
+| Other vendor adapters (Vegas, Mancala, Betsoft) | Per-vendor Phase A rollout — see `internal/ROADMAP.md` for the order |
 | `GET /v1/ingest/transactions?brandId=&playerId=` (unified view query) | CS UI consumes it |
 | Brand-scoped global query filter | First authenticated player endpoint |
 | Reference data sync (`ingest.vendor_transactions` → GBS `tbCasinoPlayToday`) | Phase C |

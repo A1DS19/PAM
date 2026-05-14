@@ -41,7 +41,13 @@ public sealed class IngestTransactionHandler(IngestDbContext db, IClock clock)
             occurredAt: cmd.OccurredAt,
             receivedAt: receivedAt,
             roundId: cmd.RoundId,
-            description: cmd.Description
+            description: cmd.Description,
+            vendorBalanceAfterCents: cmd.VendorBalanceAfterCents,
+            downstreamReference: cmd.DownstreamReference,
+            downstreamOutcomeCode: cmd.DownstreamOutcomeCode,
+            downstreamOutcomeMessage: cmd.DownstreamOutcomeMessage,
+            downstreamStatus: cmd.DownstreamStatus,
+            downstreamLatencyMs: cmd.DownstreamLatencyMs
         );
 
         db.VendorTransactions.Add(tx);

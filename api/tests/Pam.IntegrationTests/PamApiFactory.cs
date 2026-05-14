@@ -58,6 +58,13 @@ public sealed class PamApiFactory(PamContainersFixture containers)
                         // explicitly so the assertion isn't racing the
                         // timer.
                         ["Messaging:Reconciliation:Enabled"] = "false",
+                        // The FastSpin upstream is replaced by a fake
+                        // IFastSpinUpstream in tests that exercise the
+                        // intercept endpoint. The URL just has to be a
+                        // valid Uri so FastSpinUpstreamOptions's
+                        // ValidateOnStart passes during host build.
+                        ["Ingest:Vendors:FastSpin:UpstreamUrl"] =
+                            "http://test-fastspin-upstream.local/",
                     }
                 );
             }
