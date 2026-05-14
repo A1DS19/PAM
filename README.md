@@ -46,8 +46,7 @@ migration phases (A → B → C).
 
 Central package management via `api/Directory.Packages.props`.
 License-driven pins (MediatR 12.4.1, MassTransit 8.5.9,
-FluentAssertions 7.2.0) are documented in
-[`docs-fe/docs/internal/DECISIONS.md`](docs-fe/docs/internal/DECISIONS.md).
+FluentAssertions 7.2.0).
 
 ## Quick start
 
@@ -77,8 +76,6 @@ make stress-fastspin   # k6 against /v1/ingest/vendors/fastspin/main
 make stress-21g        # k6 against /v1/ingest/vendors/21g
 ```
 
-Findings + tunings in [`docs-fe/docs/STRESS.md`](docs-fe/docs/STRESS.md).
-
 ## Documentation
 
 Published docs (rendered by the Docusaurus site under `docs-fe/`):
@@ -94,13 +91,6 @@ Published docs (rendered by the Docusaurus site under `docs-fe/`):
 | [`STRESS.md`](docs-fe/docs/STRESS.md) | Stress methodology, findings, tunings, readiness assessment. |
 | [`TESTING.md`](docs-fe/docs/TESTING.md) | Unit / integration / architecture / stress conventions. |
 | [`CORE_PLATFORM_MAPPING.md`](docs-fe/docs/CORE_PLATFORM_MAPPING.md) | Section-by-section mapping of the legacy Core Platform onto planned PAM modules. |
-
-Internal docs (`docs-fe/docs/internal/` — not published):
-[`DECISIONS.md`](docs-fe/docs/internal/DECISIONS.md) (ADRs),
-[`ROADMAP.md`](docs-fe/docs/internal/ROADMAP.md),
-[`DB_SCALING.md`](docs-fe/docs/internal/DB_SCALING.md),
-[`CACHING.md`](docs-fe/docs/internal/CACHING.md),
-[`PLATFORM_HARDENING.md`](docs-fe/docs/internal/PLATFORM_HARDENING.md).
 
 ## Repository layout
 
